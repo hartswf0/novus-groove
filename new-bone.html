@@ -2,11 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Angelus Novus: Spinning Sound Synth</title>
     <link rel="icon" href="data:," />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
+        html, body {
+            height: 100%;
+        }
         body {
             margin: 0;
             padding: 0;
@@ -24,6 +27,11 @@
         /* Prefer dynamic viewport on modern mobile browsers to avoid toolbar collapse issues */
         @supports (height: 100dvh) {
           #container { height: 100dvh; }
+        }
+        /* iOS fallback when dynamic viewport not available */
+        @supports (-webkit-touch-callout: none) {
+          html, body { height: -webkit-fill-available; }
+          #container { height: -webkit-fill-available; }
         }
 
         canvas {
@@ -522,6 +530,16 @@
             addNoteLabels();
             
             addResizeHandlers();
+            // Safety: if initial size is zero (mobile toolbar transition), re-measure next tick
+            if (renderer.domElement.clientWidth === 0 || renderer.domElement.clientHeight === 0) {
+                setTimeout(() => {
+                    const vw = (window.visualViewport ? Math.floor(window.visualViewport.width) : window.innerWidth);
+                    const vh = (window.visualViewport ? Math.floor(window.visualViewport.height) : window.innerHeight);
+                    camera.aspect = vw / vh;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(vw, vh);
+                }, 50);
+            }
             animate();
         }
 
@@ -535,6 +553,7 @@
                 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
             }
             window.addEventListener('resize', onResize, { passive: true });
+            window.addEventListener('orientationchange', onResize, { passive: true });
             if (window.visualViewport) {
                 window.visualViewport.addEventListener('resize', onResize, { passive: true });
             }
@@ -789,9 +808,11 @@
 
             function onPointerMove(event) {
                 if (!isDragging || !activeObject) return;
-
-                pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-                pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                const rect = renderer.domElement.getBoundingClientRect();
+                const cx = (event.clientX - rect.left) / rect.width;
+                const cy = (event.clientY - rect.top) / rect.height;
+                pointer.x = cx * 2 - 1;
+                pointer.y = -(cy * 2 - 1);
 
                 raycaster.setFromCamera(pointer, camera);
                 const newPosition = new THREE.Vector3();
