@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ethereal Harmony Canvas (v0.1)</title>
+    <link rel="icon" href="data:," />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+        
+        :root {
+            --neon-blue: #00e5ff;
+            --neon-purple: #cc33ff;
+            --neon-yellow: #ffff00;
+            --dark-background: #0d0d1a;
+            --control-bg: rgba(0, 0, 0, 0.7);
+            --text-color: #eee;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: var(--dark-background);
+            font-family: 'Space Mono', monospace;
+            color: var(--text-color);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        #container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            flex: 1;
+            display: block;
+            touch-action: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        #video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Allow interaction with canvas below */
+            z-index: 50; /* Below UI, above 3D scene */
+            object-fit: cover;
+            filter: hue-rotate(0deg) saturate(100%); /* Controlled by JS */
+            opacity: 0; /* Hidden by default */
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        #info-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: var(--neon-purple);
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-family: 'Space Mono', monospace;
+            font-size: 14px;
+            transition: opacity 0.5s ease-in-out;
+            user-select: none;
+            z-index: 100;
+        }
+        
+        #controls-panel {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            background: var(--control-bg);
+            backdrop-filter: blur(10px) saturate(120%);
+            -webkit-backdrop-filter: blur(10px) saturate(120%);
+            padding: 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            transition: transform 0.3s ease-in-out, opacity 0.3s;
+            transform: translateX(120%);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            user-select: none;
+            font-family: 'Space Mono', monospace;
+            max-height: calc(100vh - 48px);
+            overflow-y: auto;
+            max-width: 280px; /* Keep panel small for minimal version */
+        }
+
+        #controls-panel.active {
+            transform: translateX(0);
+        }
+
+        .control-btn {
+            background: rgba(255, 255, 255, 0.08);
+            color: #e5faff;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 8px 12px;
+            border-radius: 999px; /* Pill shape */
+            cursor: pointer;
+            font-size: 14px;
+            min-width: 44px;
+            min-height: 36px;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.2s, transform 0.15s, box-shadow 0.2s, border-color 0.2s;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            white-space: nowrap;
+        }
+        
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.16);
+            transform: translateY(-1px);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .control-btn.active {
+            background: var(--neon-purple);
+            box-shadow: 0 0 12px rgba(204, 51, 255, 0.6);
+            border-color: rgba(204, 51, 255, 0.6);
+        }
+
+        .control-btn.recording {
+            background: #f44336;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 10px rgba(255, 51, 102, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(255, 51, 102, 0.8); }
+            100% { box-shadow: 0 0 10px rgba(255, 51, 102, 0.5); }
+        }
+        
+        #toggle-controls-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.08);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 8px 12px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 14px;
+            z-index: 101;
+            transition: transform 0.2s, background-color 0.2s, border-color 0.2s;
+        }
+
+        #toggle-controls-btn:hover {
+            background: rgba(255, 255, 255, 0.16);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 6px;
+        }
+        .slider-group label {
+            color: #ddd;
+            font-size: 12px;
+            letter-spacing: 0.04em;
+        }
+        .slider-group input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 140px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 999px;
+            outline: none;
+        }
+        .slider-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--neon-purple);
+            box-shadow: 0 0 0 4px rgba(204, 51, 255, 0.25);
+            cursor: pointer;
+        }
+        .slider-group input[type="range"]::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--neon-purple);
+            box-shadow: 0 0 0 4px rgba(204, 51, 255, 0.25);
+            cursor: pointer;
+        }
+        
+        #help-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            font-family: 'Space Mono', monospace;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+            z-index: 200;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.5s ease-in-out, visibility 0.5s;
+        }
+
+        #help-screen h2 {
+            font-size: 2em;
+            margin-bottom: 20px;
+            color: var(--neon-blue);
+        }
+
+        #help-screen ul {
+            list-style: none;
+            padding: 0;
+            text-align: left;
+            max-width: 600px;
+            font-size: 1.2em;
+        }
+
+        #help-screen li {
+            margin-bottom: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .note-label {
+            position: absolute;
+            color: var(--neon-yellow);
+            font-family: 'Space Mono', monospace;
+            font-size: 16px;
+            font-weight: bold;
+            text-shadow: 0 0 8px var(--neon-yellow), 0 0 4px rgba(0,0,0,0.8);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s;
+            z-index: 10;
+        }
+
+        @media (max-width: 768px) {
+            #controls-panel {
+                top: 8px;
+                right: 8px;
+                padding: 8px;
+                max-height: calc(100vh - 16px);
+                max-width: calc(100vw - 16px);
+            }
+            #toggle-controls-btn {
+                top: 8px;
+                right: 8px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            .slider-group input[type="range"] {
+                width: 100%;
+                max-width: 100%;
+            }
+            #info-overlay {
+                bottom: 10px;
+                left: 10px;
+                padding: 8px 12px;
+                font-size: 12px;
+            }
+            #help-screen h2 {
+                font-size: 1.5em;
+            }
+            #help-screen ul {
+                font-size: 1em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- 3D Scene Canvas is added by JS -->
+    </div>
+
+    <!-- Video overlay -->
+    <video id="video-overlay" autoplay loop muted></video>
+
+    <div id="info-overlay">Tap on ethereal figures to evoke polyphonic harmonies.</div>
+    <button id="toggle-controls-btn">☰</button>
+    <div id="controls-panel">
+        <!-- Input for Audio/Video -->
+        <input type="file" id="media-file-input" accept="audio/*,video/*" style="display: none;" />
+        <button id="load-media-btn" class="control-btn">Load Audio/Video</button>
+        <button id="record-mic-btn" class="control-btn">🎙️ Record Mic</button>
+        <button id="clear-media-btn" class="control-btn">🧹 Clear Media</button>
+
+        <!-- Sequencer Controls -->
+        <div style="display:flex; gap:6px; flex-wrap: wrap; justify-content:center;">
+            <button id="play-sequence-btn" class="control-btn" disabled>▶️ Seq</button>
+            <button id="pause-sequence-btn" class="control-btn" style="display: none;">⏸</button>
+            <button id="reset-sequence-btn" class="control-btn" title="Clear Sequencer">⟲ Clear Seq</button>
+        </div>
+
+        <div class="slider-group">
+            <label for="rotation-speed">Spin</label>
+            <input id="rotation-speed" type="range" min="-0.05" max="0.05" step="0.001" value="0" />
+        </div>
+        <button id="toggle-names-btn" class="control-btn">Abc Notes</button>
+        <button id="help-btn" class="control-btn">?</button>
+    </div>
+    
+    <div id="help-screen">
+        <h2>Guidance from the Angel of History</h2>
+        <ul>
+            <li><b>Interaction:</b> Tap ethereal figures to evoke harmony. Drag a figure to shape its sound:
+                <ul>
+                    <li><b>Vertical (Y-axis)</b>: Pitch (higher = higher frequency).</li>
+                    <li><b>Horizontal (X-axis)</b>: Stereo Pan (left/right).</li>
+                    <li><b>Depth (Z-axis)</b>: Filter Cutoff (forward = brighter, back = darker).</li>
+                    <li><b>Distance from Center (XZ-plane)</b>: Affects Filter Resonance and overall Voice Gain.</li>
+                </ul>
+            </li>
+            <li><b>Harmony</b>: Each figure generates a simple, angelic chord in C Major.</li>
+            <li><b>Sequencer</b>: Tap figures to add them to a loop. Press ▶ to play.</li>
+            <li><b>Media Input</b>: Load an audio or video file, or record your microphone.
+                <ul>
+                    <li>If a file/mic is active, figures will play that sound instead of their synthesized harmony.</li>
+                    <li>If a video is loaded, its color will react to the overall harmony of the scene.</li>
+                </ul>
+            </li>
+            <li><b>Connections</b>:
+                <ul>
+                    <li><span style="color:var(--neon-purple);">Purple arcs</span> = harmonic relationships.</li>
+                    <li><span style="color:var(--neon-blue);">Blue lines</span> = sequencer step playback.</li>
+                    <li><span style="color:var(--neon-yellow);">Yellow lines</span> = sample playback.</li>
+                </ul>
+            </li>
+            <li><b>Turntable</b>: Use the 'Spin' slider to rotate the scene.</li>
+            <li>Tap this screen to close.</li>
+        </ul>
+    </div>
+
+<script>
+    /* =============================================
+       ETHEREAL HARMONY CANVAS (v0.1)
+       - Minimal, delightful, and functional.
+       - Implements Sequencing, Global Audio/Video Input, Reactive Video Filters.
+       - Based on the Master Crafter's NSDS-Core plan.
+       ============================================= */
+
+    /* ====== GLOBAL STATE & UTILITIES ====== */
+    let audioContext, isAudioInitialized = false;
+    let masterGain;
+    let synthOutGain; // All voices connect here
+    let reverbDelay, reverbFeedbackGain, reverbWetGain;
+    let mediaRecorder;
+    let recordedChunks = [];
+    let recordedAudioBuffer = null; // Global audio buffer for playback
+    let micStream = null; // For recording directly, not for real-time modulation here
+
+    // Three.js Scene Variables
+    let scene, camera, renderer;
+    let turntableGroup;
+    let backboardGroup;
+    let musicalObjects = []; // Angel figures (initially created without Voice objects)
+    let connections = [];
+    let raycaster;
+    let pointer;
+    let showNoteNames = false;
+
+    let draggableObjects = [];
+    let isDragging = false;
+    let activeObject = null;
+    const dragPlane = new THREE.Plane();
+    const dragOffset = new THREE.Vector3();
+    let rotationSpeed = 0.0;
+    let turntableAngularVelocity = 0.0;
+    let isRotDragging = false;
+    let lastRotX = 0;
+    let lastRotTime = 0;
+
+    // Sequencer State
+    let sequencer = [];
+    let isSequencerPlaying = false;
+    let sequencerStartTime = 0;
+    let sequencerLoop;
+    let sequencerTempoMs = 500; // Fixed tempo for simplicity
+    let playhead = null;
+    let staffWidth = 18;
+    let staffYStart = 4;
+    let staffZ = -9.9;
+
+    // Video Control State
+    const videoElement = document.getElementById('video-overlay');
+    let videoIsActive = false;
+    let activeVoicesCount = 0; // To track scene intensity for video effects
+    let totalPitchSum = 0;
+
+    // Fixed Audio Parameters for minimal version
+    const BASE_FREQ = 261.63; // C4
+    const BASE_CUTOFF = 4000; // Default filter cutoff
+    const REVERB_FEEDBACK = 0.5; // Fixed delay time
+    const REVERB_WET_DRY = 0.3; // Fixed reverb amount
+    const HARM_TONES = 4; // A simple triad + octave
+    const CHORD_STEPS = [0, 4, 7, 12]; // C E G C (C Major Triad + Octave)
+    const SCALE_STEPS = [0, 2, 4, 5, 7, 9, 11]; // C Major
+    const DETUNE_CENTS = 8; // Slight detune for richness
+    const STEREO_SPREAD = 0.6; // Moderate stereo spread
+    const DRIFT = 0.2; // Subtle pitch drift
+    const SOFT_LP_FREQ = 9000; // Global high-frequency roll-off for synth
+
+    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+    /* ====== AUDIO CORE INITIALIZATION ====== */
+    function initAudio() {
+        if (isAudioInitialized) return;
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        masterGain = audioContext.createGain();
+        masterGain.gain.value = 0.6; // Overall master volume
+        masterGain.connect(audioContext.destination);
+
+        // Simplified Reverb/Delay (pre-delay for a more spacious feel)
+        reverbDelay = audioContext.createDelay(1.0); // Max 1 second delay
+        reverbFeedbackGain = audioContext.createGain(); // For feedback loop
+        reverbWetGain = audioContext.createGain(); // For wet signal amount
+
+        // Feedback loop for reverb
+        reverbDelay.connect(reverbFeedbackGain);
+        reverbFeedbackGain.connect(reverbDelay); // Connect feedback back to delay input
+
+        // Global soft lowpass for synth output
+        const globalSoftLP = audioContext.createBiquadFilter();
+        globalSoftLP.type = 'lowpass';
+        globalSoftLP.frequency.value = SOFT_LP_FREQ;
+        globalSoftLP.Q.value = 0.5;
+
+        synthOutGain = audioContext.createGain(); // All voices connect here
+        synthOutGain.connect(globalSoftLP); // All synth audio goes through global LP
+        globalSoftLP.connect(reverbDelay); // Send processed signal to delay
+        globalSoftLP.connect(masterGain); // Also send dry processed signal directly to master
+
+        // Set initial reverb parameters
+        reverbDelay.delayTime.value = 0.3; // Short delay
+        reverbFeedbackGain.gain.value = REVERB_FEEDBACK; // Amount of feedback
+        reverbWetGain.gain.value = REVERB_WET_DRY; // Overall wet signal to master
+        reverbDelay.connect(reverbWetGain); // Connect delay to wet gain
+        reverbWetGain.connect(masterGain); // Connect wet signal to master
+
+        isAudioInitialized = true;
+    }
+
+    /* ====== MUSIC THEORY HELPERS ====== */
+    function midiToHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+    function hzToMidi(h) { return 69 + 12 * Math.log2(h / 440); }
+    function quantizeToScale(hz) {
+        const midi = hzToMidi(hz);
+        const octave = Math.floor(midi / 12) * 12;
+        const stepInOctave = midi - octave;
+
+        let bestStep = SCALE_STEPS[0], minDiff = Math.abs(stepInOctave - SCALE_STEPS[0]);
+        for (const s of SCALE_STEPS) {
+            const d = Math.abs(stepInOctave - s);
+            if (d < minDiff) { minDiff = d; bestStep = s; }
+        }
+        const qMidi = octave + bestStep;
+        return midiToHz(qMidi);
+    }
+    function getChordOffsets(count) {
+        const arr = [];
+        for (let i = 0; i < count; i++) {
+            arr.push(CHORD_STEPS[i % CHORD_STEPS.length] + 12 * Math.floor(i / CHORD_STEPS.length));
+        }
+        return arr.slice(0, count);
+    }
+
+    /* ====== VOICE CLASS ====== */
+    class Voice {
+        constructor(nx, ny, nz, nr) {
+            if (!audioContext) {
+                console.error("AudioContext not initialized when trying to create Voice.");
+                return; 
+            }
+
+            this.children = [];
+            this.gain = audioContext.createGain();
+            this.pan = audioContext.createStereoPanner();
+            this.filter = audioContext.createBiquadFilter(); this.filter.type = 'lowpass'; this.filter.Q.value = 0.6;
+            this.env = audioContext.createGain();
+
+            this.env.connect(this.filter);
+            this.filter.connect(this.pan);
+            this.pan.connect(this.gain);
+            this.gain.connect(synthOutGain);
+
+            this.active = true;
+            this._rebuildOscs(BASE_FREQ);
+            this.updateParameters(nx, ny, nz, nr);
+
+            this.env.gain.cancelScheduledValues(audioContext.currentTime);
+            this.env.gain.linearRampToValueAtTime(0.0001, audioContext.currentTime);
+            this.env.gain.linearRampToValueAtTime(1.0 / HARM_TONES, audioContext.currentTime + 0.01);
+        }
+
+        setGain(g) { this.gain.gain.setTargetAtTime(g, audioContext.currentTime, 0.02); }
+        
+        _rebuildOscs(freqBase) {
+            this.children.forEach(ch => {
+                try { ch.osc.stop(); ch.osc.disconnect(); ch.lfo.stop(); ch.lfo.disconnect(); ch.lfoGain.disconnect(); ch.driftHzAdder.disconnect(); } catch { }
+            });
+            this.children.length = 0;
+
+            const offsets = getChordOffsets(HARM_TONES);
+
+            for (let i = 0; i < offsets.length; i++) {
+                const cents = (i - (offsets.length - 1) / 2) * DETUNE_CENTS;
+                const ratio = Math.pow(2, cents / 1200);
+
+                const midiBase = hzToMidi(freqBase);
+                const noteHz = quantizeToScale(midiToHz(midiBase + offsets[i])) * ratio;
+
+                const osc = audioContext.createOscillator(); osc.type = 'sine';
+                osc.frequency.value = noteHz;
+                osc.connect(this.env);
+
+                const lfo = audioContext.createOscillator(); lfo.type = 'sine';
+                lfo.frequency.value = 0.03 + DRIFT * 0.4 + Math.random() * 0.02;
+                const lfoGain = audioContext.createGain();
+                lfoGain.gain.value = 2 + DRIFT * 9;
+
+                const driftHzAdder = audioContext.createGain();
+                driftHzAdder.gain.value = noteHz * (Math.log(2) / 1200);
+
+                lfo.connect(lfoGain);
+                lfoGain.connect(driftHzAdder);
+                driftHzAdder.connect(osc.frequency);
+
+                osc.start(); lfo.start();
+
+                const panPos = (i / (offsets.length - 1 || 1)) * 2 - 1;
+
+                this.children.push({ osc, lfo, lfoGain, driftHzAdder, baseHz: noteHz, panPos });
+            }
+        }
+
+        updateParameters(nx, ny, nz, nr) {
+            const pitchRange = 2;
+            let f0 = BASE_FREQ * Math.pow(2, ny * pitchRange);
+            f0 = quantizeToScale(f0);
+
+            let cutoff = BASE_CUTOFF * (1 + (nz * 0.5) + (nx * 0.3));
+            cutoff = Math.max(80, Math.min(audioContext.sampleRate / 2, cutoff));
+            this.filter.frequency.setTargetAtTime(cutoff, audioContext.currentTime, 0.02);
+            this.filter.Q.setTargetAtTime(0.6 + nr * 4.0, audioContext.currentTime, 0.03);
+
+            const offsets = getChordOffsets(HARM_TONES);
+            for (let i = 0; i < this.children.length; i++) {
+                const cents = (i - (offsets.length - 1) / 2) * DETUNE_CENTS;
+                const ratio = Math.pow(2, cents / 1200);
+                const midiBase = hzToMidi(f0);
+                const noteHz = quantizeToScale(midiToHz(midiBase + offsets[i])) * ratio;
+                this.children[i].baseHz = noteHz;
+                this.children[i].osc.frequency.setTargetAtTime(noteHz, audioContext.currentTime, 0.03);
+            }
+
+            const basePan = nx;
+            const spread = STEREO_SPREAD;
+
+            const effectivePanSum = this.children.reduce((acc, ch) => {
+                const childPan = (1 - spread) * 0 + spread * ch.panPos;
+                return acc + childPan;
+            }, 0);
+            const effectivePan = effectivePanSum / (this.children.length || 1);
+
+            const finalPan = Math.max(-1, Math.min(1, basePan * 0.5 + effectivePan * 0.5));
+            this.pan.pan.setTargetAtTime(finalPan, audioContext.currentTime, 0.03);
+
+            const minG = 0.04, maxG = 0.75;
+            const g = minG + nr * (maxG - minG); this.setGain(g);
+        }
+
+        stop() {
+            try {
+                const now = audioContext.currentTime;
+                this.env.gain.cancelScheduledValues(now);
+                this.env.gain.setTargetAtTime(0.0001, now, 0.05);
+                setTimeout(() => {
+                    try {
+                        this.children.forEach(ch => {
+                            ch.osc.stop(); ch.osc.disconnect();
+                            ch.lfo.stop(); ch.lfo.disconnect();
+                            ch.lfoGain.disconnect();
+                            ch.driftHzAdder.disconnect();
+                        });
+                        this.pan.disconnect();
+                        this.filter.disconnect();
+                        this.gain.disconnect();
+                        this.env.disconnect();
+                    } catch (e) { console.warn("Error stopping voice components:", e); }
+                }, 100);
+            } catch (e) { console.warn("Error stopping voice:", e); }
+        }
+    }
+
+    /* ====== THREE.JS SCENE SETUP ====== */
+    function init() {
+        scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x0a001a, 10, 100);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 15);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x0a001a, 0.8);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        raycaster = new THREE.Raycaster();
+        pointer = new THREE.Vector2();
+
+        turntableGroup = new THREE.Group();
+        scene.add(turntableGroup);
+
+        backboardGroup = new THREE.Group();
+        scene.add(backboardGroup);
+
+        setupLighting();
+        createCelestialEnvironment();
+        createAngelFigures();
+        createMusicalStaff(); // Create the staff elements
+        setupEventListeners();
+        addNoteLabels();
+
+        animateThreeJS();
+    }
+
+    function setupLighting() {
+        const ambientLight = new THREE.AmbientLight(0x2d004d, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0x4a007f, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        scene.add(directionalLight);
+    }
+
+    function createCelestialEnvironment() {
+        const floorGeometry = new THREE.PlaneGeometry(30, 30);
+        const floorMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0x1a0a2a, roughness: 0.2, metalness: 0.1, reflectivity: 0.8,
+            clearcoat: 0.1, clearcoatRoughness: 0.2, transparent: true, opacity: 0.9
+        });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        turntableGroup.add(floor);
+
+        const gridHelper = new THREE.GridHelper(30, 30, 0x4a007f, 0x4a007f);
+        gridHelper.material.transparent = true;
+        gridHelper.material.opacity = 0.3;
+        turntableGroup.add(gridHelper);
+
+        const wallGeometry = new THREE.PlaneGeometry(20, 12);
+        const wallMaterial = new THREE.MeshBasicMaterial({
+            color: 0x0a001a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending
+        });
+        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+        wall.position.set(0, 6, -10);
+        turntableGroup.add(wall);
+
+        const discGeom = new THREE.CylinderGeometry(16, 16, 0.2, 64);
+        const discMat = new THREE.MeshPhysicalMaterial({
+            color: 0x1a1a1f, roughness: 0.5, metalness: 0.8, clearcoat: 1.0,
+            clearcoatRoughness: 0.1, reflectivity: 1.0, iridescence: 1.0, iridescenceIOR: 1.3,
+            iridescenceThicknessRange: [100, 400]
+        });
+        const disc = new THREE.Mesh(discGeom, discMat);
+        disc.position.set(0, 0.1, 0);
+        disc.receiveShadow = true;
+        turntableGroup.add(disc);
+    }
+
+    function createMusicalStaff() {
+        for (let i = 0; i < 5; i++) {
+            const lineGeometry = new THREE.BoxGeometry(staffWidth, 0.15, 0.1);
+            const lineMaterial = new THREE.MeshBasicMaterial({ color: 0x8a2be2, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+            const line = new THREE.Mesh(lineGeometry, lineMaterial);
+            line.position.set(0, staffYStart + i * 0.8, staffZ);
+            backboardGroup.add(line);
+        }
+
+        const beats = 16;
+        for (let b = 0; b <= beats; b++) {
+            const x = -staffWidth / 2 + (b / beats) * staffWidth;
+            const tickGeom = new THREE.BoxGeometry(0.05, 4.2, 0.02);
+            const tickMat = new THREE.MeshBasicMaterial({ color: b % 4 === 0 ? 0xfff0aa : 0xffffff, transparent: true, opacity: b % 4 === 0 ? 0.9 : 0.6, blending: THREE.AdditiveBlending });
+            const tick = new THREE.Mesh(tickGeom, tickMat);
+            tick.position.set(x, staffYStart + 1.6, staffZ);
+            backboardGroup.add(tick);
+        }
+
+        const playheadGeom = new THREE.BoxGeometry(0.08, 5.0, 0.02);
+        const playheadMat = new THREE.MeshBasicMaterial({ color: 0x44e5ff, transparent: true, opacity: 1.0, blending: THREE.AdditiveBlending }); // Cyan for playhead
+        playhead = new THREE.Mesh(playheadGeom, playheadMat);
+        playhead.position.set(-staffWidth / 2, staffYStart + 1.8, staffZ + 0.001);
+        playhead.visible = false;
+        backboardGroup.add(playhead);
+    }
+
+    function createAngelFigures() {
+        const figurePositions = [
+            [-8, 1, 5], [-4, 1, 8], [0, 1, 8], [4, 1, 8], [8, 1, 5],
+            [-8, 1, 0], [8, 1, 0],
+            [-8, 1, -5], [-4, 1, -5], [4, 1, -5], [8, 1, -5]
+        ];
+
+        figurePositions.forEach((pos, index) => {
+            const figure = createAngelFigureMesh();
+            figure.position.set(...pos);
+            
+            figure.userData = {
+                id: `figure-${index}`,
+                type: 'figure',
+                noteIndex: index, // For display
+                originalPosition: new THREE.Vector3(...pos),
+                isDraggable: true,
+                voice: null // Voice will be instantiated on first interaction
+            };
+            turntableGroup.add(figure);
+            musicalObjects.push(figure);
+            draggableObjects.push(figure);
+        });
+    }
+
+    function createAngelFigureMesh() {
+        const group = new THREE.Group();
+
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.4, 1.2, 8);
+        const bodyMaterial = new THREE.MeshPhongMaterial({
+            color: 0x8a2be2, emissive: 0x8a2be2, emissiveIntensity: 0.4,
+            transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending
+        });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.castShadow = true;
+        group.add(body);
+
+        const headGeometry = new THREE.SphereGeometry(0.25, 8, 8);
+        const headMaterial = new THREE.MeshPhongMaterial({
+            color: 0x8a2be2, emissive: 0x8a2be2, emissiveIntensity: 0.5,
+            transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending
+        });
+        const head = new THREE.Mesh(headGeometry, headMaterial);
+        head.position.y = 0.85;
+        head.castShadow = true;
+        group.add(head);
+
+        const wingGeometry = new THREE.PlaneGeometry(0.8, 0.8);
+        const wingMaterial = new THREE.MeshBasicMaterial({
+            color: 0xcc33ff, side: THREE.DoubleSide,
+            transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending
+        });
+
+        const leftWing = new THREE.Mesh(wingGeometry, wingMaterial);
+        leftWing.position.set(-0.6, 0.4, -0.2); leftWing.rotation.y = -Math.PI / 4; leftWing.rotation.z = 0.5;
+        group.add(leftWing);
+
+        const rightWing = new THREE.Mesh(wingGeometry, wingMaterial);
+        rightWing.position.set(0.6, 0.4, -0.2); rightWing.rotation.y = Math.PI / 4; rightWing.rotation.z = -0.5;
+        group.add(rightWing);
+
+        return group;
+    }
+
+    /* ====== EVENT LISTENERS AND UI LOGIC ====== */
+    function setupEventListeners() {
+        function onPointerDown(event) {
+            initAudio();
+            audioContext.resume();
+
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(pointer, camera);
+            const intersects = raycaster.intersectObjects(musicalObjects, true);
+
+            if (intersects.length > 0) {
+                const clickedObject = intersects[0].object.parent || intersects[0].object;
+                handleObjectClick(clickedObject);
+
+                if (clickedObject.userData && clickedObject.userData.isDraggable) {
+                    isDragging = true;
+                    activeObject = clickedObject;
+                    const intersectionPoint = intersects[0].point;
+                    const camDir = new THREE.Vector3();
+                    camera.getWorldDirection(camDir);
+                    dragPlane.setFromNormalAndCoplanarPoint(camDir, intersectionPoint);
+                    dragOffset.subVectors(activeObject.position, intersectionPoint);
+                }
+            } else {
+                isRotDragging = true;
+                lastRotX = event.clientX;
+                lastRotTime = performance.now();
+            }
+        }
+
+        function onPointerMove(event) {
+            if (!isDragging || !activeObject) return;
+
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(pointer, camera);
+            const newPosition = new THREE.Vector3();
+            raycaster.ray.intersectPlane(dragPlane, newPosition);
+
+            activeObject.position.copy(newPosition).add(dragOffset);
+
+            activeObject.position.x = Math.max(-10, Math.min(10, activeObject.position.x));
+            activeObject.position.y = Math.max(-2, Math.min(10, activeObject.position.y));
+            activeObject.position.z = Math.max(-10, Math.min(10, activeObject.position.z));
+
+            updateVoiceParametersFromObject(activeObject);
+        }
+
+        function onPointerUp(event) {
+            isDragging = false;
+            activeObject = null;
+            
+            if (isRotDragging) {
+                const now = performance.now();
+                const dx = event && event.clientX != null ? (event.clientX - lastRotX) : 0;
+                const dt = Math.max(1, now - lastRotTime);
+                const velocity = (dx / dt) * 0.01;
+                turntableAngularVelocity = velocity;
+                isRotDragging = false;
+            }
+        }
+
+        renderer.domElement.addEventListener('pointerdown', onPointerDown);
+        renderer.domElement.addEventListener('pointermove', (e) => {
+            if (isRotDragging) {
+                const now = performance.now();
+                const dx = e.clientX - lastRotX;
+                turntableGroup.rotation.y += dx * 0.003;
+                lastRotX = e.clientX;
+                lastRotTime = now;
+            }
+            onPointerMove(e);
+        });
+        renderer.domElement.addEventListener('pointerup', onPointerUp);
+        renderer.domElement.addEventListener('pointerleave', onPointerUp);
+        renderer.domElement.addEventListener('pointercancel', onPointerUp);
+
+        window.addEventListener('resize', onWindowResize);
+
+        const toggleControlsBtn = document.getElementById('toggle-controls-btn');
+        const controlsPanel = document.getElementById('controls-panel');
+        toggleControlsBtn.addEventListener('click', () => {
+            controlsPanel.classList.toggle('active');
+            onWindowResize();
+        });
+
+        const toggleNamesBtn = document.getElementById('toggle-names-btn');
+        toggleNamesBtn.addEventListener('click', () => {
+            showNoteNames = !showNoteNames;
+            toggleNamesBtn.classList.toggle('active', showNoteNames);
+            musicalObjects.forEach(obj => {
+                const label = document.getElementById(`label-${obj.userData.id}`);
+                if (label) {
+                    label.style.opacity = showNoteNames ? '1' : '0';
+                }
+            });
+        });
+
+        const helpBtn = document.getElementById('help-btn');
+        const helpScreen = document.getElementById('help-screen');
+
+        helpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            helpScreen.style.visibility = 'visible';
+            helpScreen.style.opacity = '1';
+        });
+
+        helpScreen.addEventListener('click', () => {
+            helpScreen.style.opacity = '0';
+            helpScreen.style.visibility = 'hidden';
+        });
+
+        const rotationSlider = document.getElementById('rotation-speed');
+        rotationSlider.addEventListener('input', (e) => {
+            rotationSpeed = parseFloat(e.target.value);
+        });
+
+        // --- Media Input Controls ---
+        const mediaFileInput = document.getElementById('media-file-input');
+        const loadMediaBtn = document.getElementById('load-media-btn');
+        loadMediaBtn.addEventListener('click', () => { mediaFileInput.click(); });
+        mediaFileInput.addEventListener('change', handleMediaFileLoad);
+
+        const recordMicBtn = document.getElementById('record-mic-btn');
+        recordMicBtn.addEventListener('click', toggleMicRecording);
+
+        const clearMediaBtn = document.getElementById('clear-media-btn');
+        clearMediaBtn.addEventListener('click', clearLoadedMedia);
+
+        // --- Sequencer Controls ---
+        const playSeqBtn = document.getElementById('play-sequence-btn');
+        const pauseSeqBtn = document.getElementById('pause-sequence-btn');
+        const resetSeqBtn = document.getElementById('reset-sequence-btn');
+
+        playSeqBtn.addEventListener('click', playSequencer);
+        pauseSeqBtn.addEventListener('click', pauseSequencer);
+        resetSeqBtn.addEventListener('click', resetSequencer);
+    }
+
+    // Helper to get normalized audio parameters from 3D world position
+    function map3DToAudioParams(worldPos) {
+        const xRange = 20; // -10 to 10 in scene X
+        const yRange = 12; // -2 to 10 in scene Y
+        const zRange = 20; // -10 to 10 in scene Z
+
+        const normX = THREE.MathUtils.clamp((worldPos.x + xRange / 2) / xRange, 0, 1) * 2 - 1; // -1 to 1
+        const normY = THREE.MathUtils.clamp((worldPos.y + 2) / yRange, 0, 1) * 2 - 1; // -1 to 1
+        const normZ = THREE.MathUtils.clamp((worldPos.z + zRange / 2) / zRange, 0, 1) * 2 - 1; // -1 to 1
+        const radiusXZ = Math.hypot(worldPos.x, worldPos.z) / 10; // Normalize distance from center XZ plane 0-1
+
+        return { x: normX, y: normY, z: normZ, r: radiusXZ };
+    }
+
+    function handleObjectClick(object) {
+        if (!object.userData) return;
+
+        // Lazily create Voice object if it doesn't exist
+        if (!object.userData.voice) {
+            const worldPos = object.getWorldPosition(new THREE.Vector3());
+            const { x: nx, y: ny, z: nz, r: nr } = map3DToAudioParams(worldPos);
+            object.userData.voice = new Voice(nx, ny, nz, nr);
+        }
+
+        const worldPos = object.getWorldPosition(new THREE.Vector3());
+        const { x: nx, y: ny, z: nz, r: nr } = map3DToAudioParams(worldPos);
+
+        if (recordedAudioBuffer) {
+            playRecordedSound(recordedAudioBuffer, nx, ny, nz);
+            drawContextConnection(object.position, new THREE.Vector3(0, 1, 0), 'sample');
+        } else {
+            object.userData.voice.updateParameters(nx, ny, nz, nr);
+        }
+        animateObjectActivation(object);
+        
+        // Add to sequencer if not playing from a sample
+        sequencer.push(object.userData);
+        document.getElementById('play-sequence-btn').disabled = false;
+
+        createWavePropagation(object.position, BASE_FREQ * Math.pow(2, ny * 2));
+        showHarmonicConnections(object, BASE_FREQ * Math.pow(2, ny * 2));
+        updateInfoDisplay(BASE_FREQ * Math.pow(2, ny * 2), nx, nz, object.userData.noteIndex);
+    }
+
+    function updateVoiceParametersFromObject(object) {
+        if (!object.userData || !object.userData.voice) return;
+
+        const worldPos = object.getWorldPosition(new THREE.Vector3());
+        const { x: nx, y: ny, z: nz, r: nr } = map3DToAudioParams(worldPos);
+
+        object.userData.voice.updateParameters(nx, ny, nz, nr);
+        updateInfoDisplay(BASE_FREQ * Math.pow(2, ny * 2), nx, nz, object.userData.noteIndex);
+    }
+
+    /* ====== MEDIA INPUTS (AUDIO/VIDEO/MIC) ====== */
+    async function handleMediaFileLoad(event) {
+        initAudio();
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        clearLoadedMedia(); // Clear any existing media
+
+        if (file.type.startsWith('audio/')) {
+            const arrayBuffer = await file.arrayBuffer();
+            recordedAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            document.getElementById('info-overlay').textContent = `Audio file loaded: ${file.name}`;
+            document.getElementById('info-overlay').style.opacity = '1';
+            setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 2000);
+        } else if (file.type.startsWith('video/')) {
+            const url = URL.createObjectURL(file);
+            videoElement.src = url;
+            videoElement.style.opacity = 1;
+            videoIsActive = true;
+            try {
+                await videoElement.play();
+                document.getElementById('info-overlay').textContent = `Video file loaded: ${file.name}`;
+            } catch (e) {
+                console.error("Video autoplay failed:", e);
+                document.getElementById('info-overlay').textContent = `Video play blocked for ${file.name}. Click video to play.`;
+                // Add a user interaction prompt if autoplay fails
+            }
+            document.getElementById('info-overlay').style.opacity = '1';
+            setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 2000);
+        }
+    }
+
+    async function toggleMicRecording() {
+        initAudio();
+        const recordMicBtn = document.getElementById('record-mic-btn');
+        
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+            recordMicBtn.classList.remove('recording');
+            recordMicBtn.textContent = '🎙️ Record Mic';
+        } else {
+            clearLoadedMedia(); // Clear existing media before recording
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(micStream);
+                recordedChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+                    const arrayBuffer = await blob.arrayBuffer();
+                    recordedAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    document.getElementById('info-overlay').textContent = 'Mic recording ready!';
+                    document.getElementById('info-overlay').style.opacity = '1';
+                    setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 2000);
+                };
+                
+                mediaRecorder.start();
+                recordMicBtn.classList.add('recording');
+                recordMicBtn.textContent = '🔴 Recording...';
+            } catch (err) {
+                console.error('Microphone access denied:', err);
+                document.getElementById('info-overlay').textContent = 'Microphone access denied.';
+                document.getElementById('info-overlay').style.opacity = '1';
+                setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 2000);
+            }
+        }
+    }
+
+    function clearLoadedMedia() {
+        // Clear audio buffer
+        recordedAudioBuffer = null;
+        // Stop and clear video
+        if (videoIsActive) {
+            videoElement.pause();
+            videoElement.src = '';
+            videoElement.style.opacity = 0;
+            videoIsActive = false;
+        }
+        // Stop mic stream if active
+        if (micStream) {
+            micStream.getTracks().forEach(track => track.stop());
+            micStream = null;
+        }
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            document.getElementById('record-mic-btn').classList.remove('recording');
+            document.getElementById('record-mic-btn').textContent = '🎙️ Record Mic';
+        }
+
+        document.getElementById('info-overlay').textContent = 'Media cleared.';
+        document.getElementById('info-overlay').style.opacity = '1';
+        setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 1500);
+    }
+
+    function playRecordedSound(buffer, nx, ny, nz) {
+        if (!audioContext || !buffer) return;
+        
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = Math.max(0.5, Math.min(ny + 1.5, 2)); // Adjust playback rate by Y position
+
+        const panner = audioContext.createStereoPanner();
+        panner.pan.setValueAtTime(nx, audioContext.currentTime);
+
+        const filter = audioContext.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(BASE_CUTOFF * (1 + ((nz + 1) / 2) * 0.5), audioContext.currentTime); // Adjust filter by Z
+
+        source.connect(filter);
+        filter.connect(panner);
+        panner.connect(masterGain);
+        
+        source.start();
+    }
+
+    /* ====== SEQUENCER LOGIC ====== */
+    function playSequencer() {
+        if (sequencer.length === 0) {
+            document.getElementById('info-overlay').textContent = 'Sequencer is empty! Tap figures to add.';
+            document.getElementById('info-overlay').style.opacity = '1';
+            setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 2000);
+            return;
+        }
+        if (isSequencerPlaying) return;
+
+        let i = 0;
+        isSequencerPlaying = true;
+        sequencerStartTime = performance.now();
+        playhead.visible = true;
+        document.getElementById('play-sequence-btn').style.display = 'none';
+        document.getElementById('pause-sequence-btn').style.display = 'inline-flex';
+
+        sequencerLoop = setInterval(() => {
+            if (!isSequencerPlaying) return; // Check if paused externally
+            if (i >= sequencer.length) {
+                i = 0; // Loop
+            }
+            const userData = sequencer[i];
+            const musicalObject = musicalObjects.find(obj => obj.userData.id === userData.id);
+            if (musicalObject) {
+                const worldPos = musicalObject.getWorldPosition(new THREE.Vector3());
+                const { x: nx, y: ny, z: nz, r: nr } = map3DToAudioParams(worldPos);
+
+                if (!musicalObject.userData.voice) {
+                    musicalObject.userData.voice = new Voice(nx, ny, nz, nr);
+                } else {
+                    musicalObject.userData.voice.updateParameters(nx, ny, nz, nr);
+                }
+                animateObjectActivation(musicalObject, 0x44e5ff); // Cyan for sequencer activation
+                drawContextConnection(musicalObject.position, new THREE.Vector3(0, 1, 0), 'sequence');
+            }
+            i++;
+        }, sequencerTempoMs);
+    }
+
+    function pauseSequencer() {
+        if (!isSequencerPlaying) return;
+        isSequencerPlaying = false;
+        clearInterval(sequencerLoop);
+        playhead.visible = false;
+        document.getElementById('play-sequence-btn').style.display = 'inline-flex';
+        document.getElementById('pause-sequence-btn').style.display = 'none';
+    }
+
+    function resetSequencer() {
+        pauseSequencer();
+        sequencer = [];
+        document.getElementById('play-sequence-btn').disabled = true;
+        document.getElementById('info-overlay').textContent = 'Sequencer cleared.';
+        document.getElementById('info-overlay').style.opacity = '1';
+        setTimeout(() => { document.getElementById('info-overlay').style.opacity = '0'; }, 1500);
+    }
+
+    /* ====== VISUAL FEEDBACK ====== */
+    function animateObjectActivation(object, color = 0xcc33ff) {
+        object.children.forEach(child => {
+            if (child.material) {
+                if (child.material.emissive) {
+                    child.material.emissive.setHex(color);
+                    setTimeout(() => child.material.emissive.setHex(0x000000), 500);
+                }
+                if (child.material.color) {
+                    const originalColor = child.material.color.clone();
+                    child.material.color.setHex(color);
+                    setTimeout(() => child.material.color.copy(originalColor), 500);
+                }
+            }
+        });
+
+        animateProperty({ scale: 1 }, { scale: 1.3 }, 200, (values) => {
+            object.scale.setScalar(values.scale);
+        }, () => {
+            animateProperty({ scale: 1.3 }, { scale: 1 }, 300, (values) => {
+                object.scale.setScalar(values.scale);
+            });
+        });
+    }
+
+    function createWavePropagation(origin, frequency) {
+        const geometry = new THREE.BufferGeometry();
+        const material = new THREE.LineBasicMaterial({ color: 0x8a2be2, linewidth: 2, transparent: true, blending: THREE.AdditiveBlending });
+        const line = new THREE.Line(geometry, material);
+        line.position.copy(origin);
+        line.lookAt(camera.position);
+
+        const startTime = Date.now();
+        const duration = 2000;
+
+        const animateWave = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = elapsed / duration;
+            if (progress > 1) { turntableGroup.remove(line); return; }
+
+            const newPoints = [];
+            for (let i = 0; i < 200; i++) {
+                const angle = (i / 200) * Math.PI * 2 * (frequency / 100);
+                const x = (i - 100) * 0.1;
+                const y = Math.sin(angle) * 2 * (1 - progress);
+                newPoints.push(new THREE.Vector3(x, y, 0));
+            }
+            line.geometry.setFromPoints(newPoints);
+            line.position.z -= progress * 5;
+            requestAnimationFrame(animateWave);
+        };
+        turntableGroup.add(line);
+        animateWave();
+    }
+
+    function showHarmonicConnections(activeObject, frequency) {
+        connections.forEach(conn => turntableGroup.remove(conn));
+        connections = [];
+
+        musicalObjects.forEach(obj => {
+            if (obj === activeObject || obj.userData.type !== 'figure' || !obj.userData.voice) return;
+
+            const objBaseFreq = obj.userData.voice.children[0]?.baseHz || BASE_FREQ;
+            const ratio = frequency / objBaseFreq;
+
+            const harmonicRatios = [1, 2, 1.5, 1.25, 4 / 3, 3 / 2, 5 / 4];
+            let strength = 0;
+
+            harmonicRatios.forEach(r => {
+                const difference = Math.abs(ratio - r);
+                const inverseDifference = Math.abs(1 / ratio - r);
+                if (difference < 0.1 || inverseDifference < 0.1) {
+                    strength = Math.max(strength, 1 - Math.min(difference, inverseDifference) * 10);
+                }
+            });
+
+            if (strength > 0) {
+                const connection = createHarmonicConnection(activeObject.position, obj.position, strength);
+                turntableGroup.add(connection);
+                connections.push(connection);
+            }
+        });
+
+        setTimeout(() => {
+            connections.forEach(conn => turntableGroup.remove(conn));
+            connections = [];
+        }, 2000);
+    }
+
+    function createHarmonicConnection(pos1, pos2, strength) {
+        const points = [];
+        const distance = pos1.distanceTo(pos2);
+        const midpoint = new THREE.Vector3().addVectors(pos1, pos2).multiplyScalar(0.5);
+        midpoint.y += distance * 0.3;
+
+        for (let i = 0; i <= 20; i++) {
+            const t = i / 20;
+            const point = new THREE.Vector3();
+            point.lerpVectors(pos1, pos2, t);
+            point.y += Math.sin(t * Math.PI) * distance * 0.3 * strength;
+            points.push(point);
+        }
+
+        const curve = new THREE.CatmullRomCurve3(points);
+        const geometry = new THREE.TubeGeometry(curve, 20, 0.05 + strength * 0.1, 8, false);
+        const material = new THREE.MeshBasicMaterial({ color: 0xcc33ff, transparent: true, opacity: 0.2 + strength * 0.8, blending: THREE.AdditiveBlending });
+        
+        return new THREE.Mesh(geometry, material);
+    }
+
+    function updateInfoDisplay(frequency, xFactor, zFactor, noteIndex) {
+        const pitchMidi = hzToMidi(frequency);
+        const midiNote = Math.round(pitchMidi % 12);
+        const noteName = noteNames[midiNote];
+        const panValue = xFactor.toFixed(2);
+        const filterValue = (BASE_CUTOFF * (1 + ((zFactor + 1) / 2) * 0.5)).toFixed(0);
+
+        const infoOverlay = document.getElementById('info-overlay');
+        infoOverlay.textContent = `Note: ${noteName} (${frequency.toFixed(2)} Hz) | Pan: ${panValue} | Filter: ${filterValue} Hz`;
+        infoOverlay.style.opacity = '1';
+
+        setTimeout(() => {
+            infoOverlay.style.opacity = '0';
+        }, 2000);
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    
+    function animateThreeJS() {
+        requestAnimationFrame(animateThreeJS);
+
+        turntableGroup.rotation.y += turntableAngularVelocity + rotationSpeed;
+        turntableAngularVelocity *= 0.96;
+
+        // Sequencer playhead animation
+        if (isSequencerPlaying && sequencer.length > 0 && playhead) {
+            const elapsed = performance.now() - sequencerStartTime;
+            const period = sequencer.length * sequencerTempoMs;
+            const phase = (elapsed % period) / period;
+            const x = -staffWidth / 2 + phase * staffWidth;
+            playhead.position.x = x;
+            playhead.visible = true;
+        } else if (playhead) {
+            playhead.visible = false;
+        }
+
+        // Update video filters based on scene activity
+        updateVideoFilters();
+
+        musicalObjects.forEach((obj) => {
+            if (obj.userData && obj.userData.originalPosition) {
+                const label = document.getElementById(`label-${obj.userData.id}`);
+                if (label) {
+                    const vector = new THREE.Vector3();
+                    const worldPos = obj.getWorldPosition(vector);
+                    worldPos.project(camera);
+                    const x = (worldPos.x * 0.5 + 0.5) * window.innerWidth;
+                    const y = (-worldPos.y * 0.5 + 0.5) * window.innerHeight;
+                    label.style.left = `${x}px`;
+                    label.style.top = `${y}px`;
+                }
+            }
+        });
+
+        backboardGroup.position.copy(camera.position);
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        forward.multiplyScalar(12);
+        backboardGroup.position.add(forward);
+        backboardGroup.lookAt(camera.position.clone().add(forward));
+        backboardGroup.rotation.y += Math.PI;
+
+        camera.lookAt(0, 4, 0);
+        
+        renderer.render(scene, camera);
+    }
+    
+    function animateProperty(from, to, duration, onUpdate, onComplete) {
+        const start = performance.now();
+        function tick(now) {
+            const elapsed = now - start;
+            const progress = Math.min(elapsed / duration, 1);
+            const values = {};
+            for (const key in from) {
+                values[key] = from[key] + (to[key] - from[key]) * progress;
+            }
+            onUpdate(values);
+            if (progress < 1) {
+                requestAnimationFrame(tick);
+            } else if (onComplete) {
+                onComplete();
+            }
+        }
+        requestAnimationFrame(tick);
+    }
+    
+    function addNoteLabels() {
+        musicalObjects.forEach(obj => {
+            if (obj.userData) {
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'note-label';
+                labelDiv.id = `label-${obj.userData.id}`;
+                labelDiv.textContent = noteNames[obj.userData.noteIndex % noteNames.length];
+                document.body.appendChild(labelDiv);
+            }
+        });
+    }
+
+    /* ====== VIDEO FILTER LOGIC ====== */
+    function updateVideoFilters() {
+        if (!videoIsActive || !videoElement.duration) {
+            videoElement.style.opacity = 0;
+            return;
+        }
+
+        let totalActiveFiguresPitchNorm = 0;
+        let figuresPlayingCount = 0;
+        
+        musicalObjects.forEach(obj => {
+            if (obj.userData && obj.userData.voice && obj.userData.voice.active && obj.userData.voice.env.gain.value > 0.01) {
+                const worldPos = obj.getWorldPosition(new THREE.Vector3());
+                const { y: ny } = map3DToAudioParams(worldPos);
+                
+                // Map ny (-1 to 1) to 0-1 for pitch normalization
+                const pitchNorm = (ny + 1) / 2; 
+                totalActiveFiguresPitchNorm += pitchNorm;
+                figuresPlayingCount++;
+            }
+        });
+
+        activeVoicesCount = figuresPlayingCount; // Update global counter for scene intensity
+
+        if (figuresPlayingCount > 0) {
+            videoElement.style.opacity = 0.8; // Make video visible when sound plays
+            const averagePitchNorm = totalActiveFiguresPitchNorm / figuresPlayingCount;
+
+            // Map average pitch (0-1) to hue-rotate (0-360deg)
+            const hue = averagePitchNorm * 360; 
+            // Map scene intensity (figures playing) to saturation (e.g., 100% to 200%)
+            const saturation = 100 + Math.min(figuresPlayingCount * 10, 100); 
+
+            videoElement.style.filter = `hue-rotate(${hue}deg) saturate(${saturation}%)`;
+        } else {
+            // Fade video out if no figures are actively playing
+            videoElement.style.opacity = Math.max(0, parseFloat(videoElement.style.opacity) - 0.01);
+            videoElement.style.filter = `hue-rotate(0deg) saturate(100%)`; // Reset filter when fading out
+        }
+    }
+    
+    // Initial setup on window load
+    window.onload = () => {
+        init();
+        videoElement.volume = 0; // Mute video by default, focus on generated sound
+    };
+</script>
+</body>
+</html>

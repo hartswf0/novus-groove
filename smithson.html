@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Angelus Novus Sequencer — 3D Rotating Sound Tableau (Auto‑Sequencing)</title>
+<style>
+  :root { --bg:#0d0d1a; --ink:#eaf9ff; --cyan:#00e5ff; --green:#00ff99; --mag:#cc33ff; --red:#ff3366; }
+  html,body { height:100%; width:100%; margin:0; background:var(--bg); color:var(--ink); font-family: monospace; }
+  body { display:flex; flex-direction:column; overflow:hidden; }
+  #stage { position:relative; flex:1; width:100%; height:100%; }
+  canvas { position:absolute; inset:0; display:block; touch-action:none; background:transparent; }
+  #stamp { position:absolute; top:8px; left:8px; background:rgba(0,0,0,.5); border-radius:999px; padding:4px 10px; font-size:12px; color:#8ff; z-index:10; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="chart"></canvas>
+    <div id="stamp">Angelus Novus — Automatic sequencing, driven by the storm of progress</div>
+  </div>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+const canvas=document.getElementById('chart');
+let AC,isInit=false,master,wet,dry,delay,fb,softLP;
+function initAudio(){ if(isInit) return; AC=new (window.AudioContext||window.webkitAudioContext)(); master=AC.createGain(); master.gain.value=0.8; dry=AC.createGain(); wet=AC.createGain(); wet.gain.value=0.3; dry.gain.value=0.7; delay=AC.createDelay(2); delay.delayTime.value=0.5; fb=AC.createGain(); fb.gain.value=0.21; softLP=AC.createBiquadFilter(); softLP.type='lowpass'; softLP.frequency.value=9000; softLP.connect(dry); softLP.connect(wet); wet.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(master); dry.connect(master); master.connect(AC.destination); isInit=true; }
+
+// Scene
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+canvas.style.width='100%'; canvas.style.height='100%';
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(45,1,0.1,100);
+camera.position.set(0,5,10);
+scene.add(new THREE.AmbientLight(0x555555));
+const light=new THREE.PointLight(0xffffff,1.2); light.position.set(5,8,5); scene.add(light);
+
+// Plate sequencer
+const plateGeo=new THREE.CylinderGeometry(5,5,0.2,64);
+const plateMat=new THREE.MeshStandardMaterial({color:0x222244,metalness:0.8,roughness:0.2});
+const plate=new THREE.Mesh(plateGeo,plateMat);
+scene.add(plate);
+
+// Playhead (angel's gaze) — fixed world-line at 12 o'clock
+const gazeGeo = new THREE.CylinderGeometry(0.03,0.03,5.6,12);
+const gazeMat = new THREE.MeshStandardMaterial({color:0xffcc66, emissive:0x332200});
+const gaze = new THREE.Mesh(gazeGeo,gazeMat);
+gaze.position.set(0,0.2,-2.8);
+scene.add(gaze);
+
+// Sequencer state
+let BPM = 100;                 // base tempo
+const STEPS = 16;              // 16th notes per revolution
+let stormIntensity = 0.2;      // 0..1 → micro‑timing jitter
+let debrisMemory = 4.0;        // seconds history fades
+let lastAngle = 0;             // previous plate phase (0..2π)
+
+// Dial markers (notes around the plate)
+const markers=[]; const baseFreq=180;
+for(let i=0;i<STEPS;i++){
+  const markerGeo=new THREE.SphereGeometry(0.18,16,16);
+  const markerMat=new THREE.MeshStandardMaterial({color:0x00e5ff});
+  const marker=new THREE.Mesh(markerGeo,markerMat);
+  const angle=(i/STEPS)*Math.PI*2; // fixed in plate local space
+  marker.position.set(Math.cos(angle)*4.5,0.2,Math.sin(angle)*4.5);
+  marker.userData={angle, on: (i%4===0), freq: baseFreq*Math.pow(2,(i%7)/12)};
+  marker.material.emissive = new THREE.Color(0x001122);
+  plate.add(marker);
+  markers.push(marker);
+}
+
+// History halo (simple particle trail stored as timestamps)
+const history=[]; // {time, idx}
+
+// Interaction — click a marker to toggle it on/off and ping it instantly
+const raycaster=new THREE.Raycaster();
+const mouse=new THREE.Vector2();
+canvas.addEventListener('pointerdown', async e=>{
+  if(!isInit){initAudio(); await AC.resume();}
+  const rect = canvas.getBoundingClientRect();
+  mouse.x=((e.clientX-rect.left)/rect.width)*2-1;
+  mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObjects(scene.children,true);
+  if(hits.length>0){
+    const obj=hits[0].object;
+    if(obj.parent===plate){
+      obj.userData.on = !obj.userData.on;
+      obj.material.color.setHex(obj.userData.on?0x00e5ff:0x225577);
+      if(obj.userData.on){ playNote(obj.userData.freq); }
+    }
+  }
+});
+
+// Keyboard: +/- tempo, [ ] storm, ; ' debris memory
+window.addEventListener('keydown',e=>{
+  if(e.key==='+') BPM=Math.min(240,BPM+2);
+  if(e.key==='-') BPM=Math.max(40,BPM-2);
+  if(e.key==='[') stormIntensity=Math.max(0,+(stormIntensity-0.05).toFixed(2));
+  if(e.key===']') stormIntensity=Math.min(1,+(stormIntensity+0.05).toFixed(2));
+  if(e.key===';') debrisMemory=Math.max(0.5,debrisMemory-0.5);
+  if(e.key==="'") debrisMemory=Math.min(12,debrisMemory+0.5);
+});
+
+// Audio helper
+function playNote(freq){
+  if(!isInit){initAudio();}
+  const vGain=AC.createGain(); vGain.gain.value=0; vGain.connect(softLP);
+  const o=AC.createOscillator(); o.type='sine'; o.frequency.value=freq;
+  o.connect(vGain);
+  const now=AC.currentTime;
+  vGain.gain.linearRampToValueAtTime(0.25, now+0.005);
+  vGain.gain.exponentialRampToValueAtTime(0.0001, now+0.18);
+  o.start(now); o.stop(now+0.22);
+}
+
+// Sequencing logic: trigger when a marker crosses the fixed gaze line at 12 o'clock
+function tick(dt){
+  const revPerSec = (BPM/60)/4;              // 1 rev = 1 bar (4 beats)
+  const dAngle = (Math.PI*2)*revPerSec*dt;   // rotation step
+  plate.rotation.y += dAngle;
+
+  const currAngle = ((plate.rotation.y%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  const prevAngle = ((lastAngle%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  lastAngle = currAngle;
+
+  const crossed = (aPrev,aCurr,th=0)=> (aPrev<aCurr)
+      ? (aPrev<=th && th<aCurr)
+      : (aPrev<=th || th<aCurr);
+
+  for(let i=0;i<markers.length;i++){
+    const m=markers[i]; const local = m.userData.angle; const worldPrev = (prevAngle+local)%(Math.PI*2); const worldCurr = (currAngle+local)%(Math.PI*2);
+    if(crossed(worldPrev, worldCurr, 0)){
+      if(m.userData.on){
+        const jitter = (Math.random()*2-1) * stormIntensity * 0.03; // ±30ms max
+        // visual flash
+        m.material.emissive.setHex(0x1144ff);
+        setTimeout(()=>m.material.emissive.setHex(0x001122), 80);
+        playNote(m.userData.freq);
+        history.push({time: performance.now()/1000, idx:i});
+      }
+    }
+  }
+}
+
+// 2D overlay for history halo
+const overlay = document.createElement('canvas');
+overlay.style.position='absolute'; overlay.style.inset='0'; overlay.style.pointerEvents='none';
+document.getElementById('stage').appendChild(overlay);
+const og = overlay.getContext('2d');
+
+function drawOverlay(){
+  const w = overlay.width = overlay.clientWidth;
+  const h = overlay.height = overlay.clientHeight;
+  og.clearRect(0,0,w,h);
+  const r = Math.min(w,h)*0.36;
+  const cx=w/2, cy=h/2;
+  const now = performance.now()/1000;
+  for(const ev of history){
+    const age = now-ev.time; if(age>debrisMemory) continue;
+    const a = (ev.idx/STEPS)*Math.PI*2;
+    const alpha = 1 - age/debrisMemory;
+    og.strokeStyle = `rgba(255,200,100,${alpha.toFixed(3)})`;
+    og.lineWidth = 2;
+    og.beginPath(); og.arc(cx,cy,r+8, a-0.05, a+0.05); og.stroke();
+  }
+}
+
+let prevTs; 
+function animate(ts){
+  if(!prevTs) prevTs = ts; 
+  const dt = Math.min(0.05, (ts - prevTs)/1000);
+  prevTs = ts;
+  tick(dt);
+  renderer.render(scene,camera);
+  drawOverlay();
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+function resize(){
+  const stage = document.getElementById('stage');
+  const w=stage.clientWidth, h=stage.clientHeight;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  renderer.setSize(w,h,false);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize',resize); resize();
+</script>
+</body>
+</html>

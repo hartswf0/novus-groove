@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"/>
+<title>Angelus Novus · Plat — All is Circle</title>
+<style>
+  :root{
+    --bg:#0a0a0a;--fg:#f6f6f6;--muted:#bdbdbd;--grid:#1b1b1b;--accent:#ff2a2a;--warn:#ffcf00;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:400 14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu}
+  .wrap{min-height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:8px;padding:10px env(safe-area-inset-top) env(safe-area-inset-bottom) env(safe-area-inset-right) env(safe-area-inset-left)}
+  header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .title{font-weight:700;letter-spacing:.4px}
+  .badge{border:1px solid var(--grid);padding:2px 8px;border-radius:999px;color:var(--muted)}
+  .transport{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+  button{appearance:none;background:#151515;border:1px solid var(--grid);color:var(--fg);padding:10px 12px;border-radius:12px;cursor:pointer}
+  button.primary{background:var(--accent);border-color:#a00}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .pane{position:relative;border:1px solid var(--grid);border-radius:16px;overflow:hidden;background:#101010}
+  canvas{display:block;width:100%;height:100%}
+  .hint{color:var(--muted);text-align:center;padding:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="title">ANGELUS NOVUS · ALL IS CIRCLE <span class="badge">Plat v2.0</span></div>
+    <div class="transport" role="group" aria-label="Transport">
+      <button id="btn-audio" class="primary">Initiate Wind</button>
+      <button id="btn-play" disabled>Play</button>
+      <button id="btn-stop" disabled>Stop</button>
+      <button id="btn-clear" title="Clear halo debris">Clear Debris</button>
+    </div>
+  </header>
+  <div class="pane"><canvas id="plat"></canvas></div>
+  <div class="hint">no sliders — drag the rings. tap the bands to seed notes. two fingers rotate the gaze. long‑press to scrub ghosts.</div>
+</div>
+<script>
+(() => {
+  // ======= Music & Scale =======
+  const SCALES={C_major:[0,2,4,5,7,9,11],A_minor:[0,2,3,5,7,8,10],D_dorian:[0,2,3,5,7,9,10],E_phrygian:[0,1,3,5,7,8,10]};
+  const SCALE_KEYS=['C_major','A_minor','D_dorian','E_phrygian'];
+  function midiToFreq(m){return 440*Math.pow(2,(m-69)/12)}
+  function rootOf(name){return name.startsWith('C')?48:name.startsWith('A')?45:name.startsWith('D')?50:52}
+
+  // ======= State =======
+  const state={rows:8,steps:16,grid:[],playhead:0,isPlaying:false,
+    bpm:120, // controlled by inner ring angle
+    storm:.35,gaze:0, memoryRev:3, redemption:.25, // all ring‑controlled
+    scaleIdx:0, root:48,
+    revCounter:0,startTime:0,jitterPhase:0,
+  };
+  for(let r=0;r<state.rows;r++) state.grid[r]=Array(state.steps).fill(0);
+
+  // ======= Canvas =======
+  const c=document.getElementById('plat'); const ctx2=c.getContext('2d',{alpha:true});
+  function resize(){ c.width=c.clientWidth*devicePixelRatio; c.height=c.clientHeight*devicePixelRatio; draw(); }
+  addEventListener('resize', resize, {passive:true});
+
+  // Ring geometry (relative radii)
+  const rings={
+    debris:0.20,         // innermost — debris cloud
+    tempo:0.28,          // BPM ring handle
+    controlStart:0.36,   // control rings band start
+    controlEnd:0.60,     // control rings band end
+    gridStart:0.62,      // note grid start
+    gridEnd:0.95         // note grid end
+  };
+
+  // Control ring handles mapped to angle (0..TAU)
+  const TAU=Math.PI*2;
+  const knobs=[
+    {id:'storm', label:'storm', angle:TAU*0.15, map:a=>state.storm=(a/TAU)},
+    {id:'gaze', label:'gaze', angle:0, map:a=>state.gaze=(a*180/Math.PI-180)},
+    {id:'memory', label:'memory', angle:TAU*0.65, map:a=>state.memoryRev=Math.round((a/TAU)*10)},
+    {id:'redemption', label:'mercy', angle:TAU*0.85, map:a=>state.redemption=(a/TAU)}
+  ];
+  let tempoAngle=TAU*0.33; // sets BPM below
+  function tempoFromAngle(a){ const v=(a/TAU); return Math.round(40+ v*180); }
+
+  // ======= Audio =======
+  let ac=null, master=null, reverb=null;
+  function setupAudio(){
+    ac=new (window.AudioContext||window.webkitAudioContext)();
+    master=ac.createGain(); master.gain.value=.85; master.connect(ac.destination);
+    const con=ac.createConvolver(); con.buffer=impulse(ac,1.6); reverb=ac.createGain(); reverb.gain.value=.15; con.connect(reverb); reverb.connect(master);
+  }
+  function impulse(ac,sec){ const r=ac.sampleRate,len=r*sec,b=ac.createBuffer(2,len,r); for(let ch=0;ch<2;ch++){ const d=b.getChannelData(ch); for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2);} return b; }
+  function synth(m,when,vel=.8){ if(!ac) return; const o=ac.createOscillator();o.type='triangle';o.frequency.setValueAtTime(midiToFreq(m),when); const g=ac.createGain(); const v=.16+vel*.14; g.gain.setValueAtTime(0,when); g.gain.linearRampToValueAtTime(v,when+.005); g.gain.exponentialRampToValueAtTime(0.0001,when+.35); const f=ac.createBiquadFilter(); f.type='lowpass'; f.frequency.setValueAtTime(400+(m%12)*60+vel*1200,when); o.connect(f); f.connect(g); g.connect(master); const rv=ac.createGain(); rv.gain.value=0.08+state.redemption*0.3; g.connect(rv); rv.connect(reverb); o.start(when); o.stop(when+.5); }
+
+  // ======= Scheduler =======
+  function stepDur(){ const spb=60/state.bpm; const base=spb*.25; const j=(Math.sin(state.jitterPhase)*.5+Math.random()*.5-.25)*state.storm*base*.6; state.jitterPhase+=.37+state.storm*.11; return Math.max(.04, base+j); }
+  function schedule(){ if(!ac) return; const now=ac.currentTime; while(state.startTime<now+.2){ const col=state.playhead; const notes=[]; const degrees=SCALES[SCALE_KEYS[state.scaleIdx]]; for(let r=0;r<state.rows;r++) if(state.grid[r][col]){ const octave=3+Math.floor((state.rows-1-r)/degrees.length); const deg=(state.rows-1-r)%degrees.length; let pitch=state.root+degrees[deg]+octave*12; if(Math.random()<state.redemption*.4) pitch=state.root; notes.push({pitch,vel:.7}); }
+      const t=state.startTime; notes.forEach(n=>synth(n.pitch,t,n.vel)); addDebris(col, notes);
+      state.playhead=(state.playhead+1)%state.steps; state.revCounter+=(state.playhead===0)?1:0; state.startTime+=stepDur(); }
+  }
+
+  // ======= Debris / Halo =======
+  const glyphs=[]; // {t,step,pitch,rev,x,y}
+  function addDebris(step, notes){ const rev=state.revCounter+(step/state.steps); if(notes.length===0){ glyphs.push({t:performance.now(),step,pitch:null,rev}); } else { notes.forEach(n=> glyphs.push({t:performance.now(),step,pitch:n.pitch,rev})); }
+    const minRev=state.revCounter-state.memoryRev-1; while(glyphs.length && glyphs[0].rev<minRev) glyphs.shift(); }
+
+  // ======= Drawing =======
+  function draw(){ const w=c.width,h=c.height; ctx2.setTransform(1,0,0,1,0,0); ctx2.clearRect(0,0,w,h); const cx=w/2, cy=h/2; const R=Math.min(w,h)*0.48; ctx2.save(); ctx2.translate(cx,cy); ctx2.rotate(state.gaze*Math.PI/180);
+    // background rings
+    ctx2.strokeStyle='rgba(255,255,255,.08)'; ctx2.lineWidth=1*devicePixelRatio;
+    for(let i=0;i<10;i++){ ctx2.beginPath(); ctx2.arc(0,0, R*(0.15+i*0.08), 0, TAU); ctx2.stroke(); }
+
+    // tempo ring + handle
+    state.bpm=tempoFromAngle(tempoAngle);
+    drawRing(R*rings.tempo, R*(rings.tempo+0.02), '#ffffff22');
+    drawHandle(R*rings.tempo, tempoAngle, 'BPM '+state.bpm);
+
+    // control rings (storm, memory, mercy, gaze)
+    const bandIn=R*rings.controlStart, bandOut=R*rings.controlEnd;
+    drawBand(bandIn, bandOut, '#ffffff12');
+    knobs.forEach(k=> drawHandle((bandIn+bandOut)/2, k.angle, k.label));
+
+    // note grid sectors (concentric 8 bands × 16 slices)
+    const gIn=R*rings.gridStart, gOut=R*rings.gridEnd; const bandH=(gOut-gIn)/state.rows;
+    for(let r=0;r<state.rows;r++){
+      for(let s=0;s<state.steps;s++){
+        const a0=s/state.steps*TAU, a1=(s+1)/state.steps*TAU; const ri=gIn+r*bandH, ro=ri+bandH-2*devicePixelRatio; const on=state.grid[r][s];
+        ctx2.beginPath(); arcSector(ctx2, ri, ro, a0, a1);
+        ctx2.fillStyle= on? 'rgba(255,42,42,.8)' : 'rgba(255,255,255,.05)'; ctx2.fill();
+        if(state.isPlaying && s===state.playhead){ ctx2.strokeStyle='rgba(255,207,0,.9)'; ctx2.lineWidth=2*devicePixelRatio; ctx2.stroke(); }
+      }
+    }
+
+    // debris halo
+    const now=performance.now();
+    glyphs.forEach(g=>{ const th=(g.step/state.steps)*TAU+(g.rev-state.revCounter)*TAU; const rr=R*(rings.gridStart)+ (R*(rings.gridEnd-rings.gridStart))*(g.pitch? ((g.pitch%12)/12): 0.06); const age=(now-g.t)/1000; const fade=Math.max(0,1-age/(2+state.memoryRev*.4)); ctx2.beginPath(); ctx2.fillStyle=g.pitch?`rgba(255,42,42,${.25+.6*fade})`:`rgba(138,170,255,${.15+.5*fade})`; const x=Math.cos(th)*rr, y=Math.sin(th)*rr; ctx2.arc(x,y, (g.pitch?5:3)*devicePixelRatio,0,TAU); ctx2.fill(); });
+
+    // labels
+    ctx2.fillStyle='rgba(255,255,255,.7)'; ctx2.font=`${12*devicePixelRatio}px system-ui`; ctx2.textAlign='center'; ctx2.fillText('Angelus Novus · Plat',0,-6*devicePixelRatio); ctx2.fillStyle='rgba(255,255,255,.5)'; ctx2.fillText('all is circle · all is debris',0,10*devicePixelRatio);
+    ctx2.restore();
+  }
+  function drawRing(rIn,rOut,color){ ctx2.fillStyle=color; ctx2.beginPath(); ctx2.arc(0,0,rOut,0,TAU); ctx2.arc(0,0,rIn,0,TAU,true); ctx2.fill(); }
+  function drawBand(rIn,rOut,color){ drawRing(rIn,rOut,color); }
+  function drawHandle(r,ang,label){ const x=Math.cos(ang)*r, y=Math.sin(ang)*r; ctx2.fillStyle='rgba(255,255,255,.9)'; ctx2.beginPath(); ctx2.arc(x,y,6*devicePixelRatio,0,TAU); ctx2.fill(); ctx2.fillStyle='rgba(255,255,255,.6)'; ctx2.font=`${10*devicePixelRatio}px system-ui`; ctx2.textAlign='center'; ctx2.fillText(label, x, y-12*devicePixelRatio); }
+  function arcSector(ctx, ri, ro, a0, a1){ ctx.beginPath(); ctx.arc(0,0, ro, a0, a1); ctx.arc(0,0, ri, a1, a0, true); ctx.closePath(); }
+
+  // ======= Interaction =======
+  let dragging=null; // {type:'tempo'|'knob'|'cell', idx?, r?, s?}
+  c.addEventListener('pointerdown', (e)=>{ c.setPointerCapture(e.pointerId); const p=toLocal(e); dragging=hit(p.x,p.y); applyDrag(p); });
+  c.addEventListener('pointermove', (e)=>{ if(!dragging) return; const p=toLocal(e); applyDrag(p); });
+  c.addEventListener('pointerup', ()=>{ dragging=null; });
+  c.addEventListener('pointercancel', ()=>{ dragging=null; });
+
+  // two‑finger rotate gaze
+  let touches=new Map();
+  c.addEventListener('touchstart', ()=>{}, {passive:true});
+  c.addEventListener('pointerdown', e=>{ touches.set(e.pointerId, e); });
+  c.addEventListener('pointerup', e=>{ touches.delete(e.pointerId); });
+  c.addEventListener('pointermove', e=>{ if(!touches.has(e.pointerId)) return; touches.set(e.pointerId,e); if(touches.size===2){ const arr=[...touches.values()]; const a0=angleFrom(arr[0]); const a1=angleFrom(arr[1]); const d=(a1-a0); state.gaze += d*180/Math.PI; draw(); }});
+
+  function angleFrom(ev){ const r=c.getBoundingClientRect(); const x=(ev.clientX-r.left)*devicePixelRatio - c.width/2; const y=(ev.clientY-r.top)*devicePixelRatio - c.height/2; return Math.atan2(y,x); }
+  function toLocal(e){ const r=c.getBoundingClientRect(); const x=(e.clientX-r.left)*devicePixelRatio - c.width/2; const y=(e.clientY-r.top)*devicePixelRatio - c.height/2; return {x,y, r:Math.hypot(x,y), a:Math.atan2(y,x)} }
+
+  function hit(x,y){ const R=Math.min(c.width,c.height)*0.48; const rr=Math.hypot(x,y); const a=(Math.atan2(y,x)+TAU)%TAU; // tempo
+    if(Math.abs(rr - R*rings.tempo) < 18*devicePixelRatio){ return {type:'tempo'} }
+    // knobs
+    const bandIn=R*rings.controlStart, bandOut=R*rings.controlEnd; if(rr>bandIn-20*devicePixelRatio && rr<bandOut+20*devicePixelRatio){
+      // find nearest knob by angle
+      let best=0,bd=9e9; knobs.forEach((k,i)=>{ const d=Math.min(Math.abs(k.angle-a), TAU-Math.abs(k.angle-a)); if(d<bd){ bd=d; best=i; } }); return {type:'knob', idx:best}; }
+    // grid
+    const gIn=R*rings.gridStart, gOut=R*rings.gridEnd; if(rr>=gIn && rr<=gOut){ const s=Math.floor(((a/TAU)*state.steps)%state.steps); const bandH=(gOut-gIn)/state.rows; const rIdx=Math.min(state.rows-1, Math.floor((rr-gIn)/bandH)); return {type:'cell', r:rIdx, s:s}; }
+    return null; }
+
+  function applyDrag(p){ if(!dragging){ draw(); return; }
+    if(dragging.type==='tempo'){ tempoAngle=(p.a+TAU)%TAU; }
+    if(dragging.type==='knob'){ const k=knobs[dragging.idx]; k.angle=(p.a+TAU)%TAU; k.map(k.angle); }
+    if(dragging.type==='cell'){ state.grid[dragging.r][dragging.s]^=1; dragging=null; }
+    draw(); persist(); }
+
+  // long‑press to clear ghosts
+  let pressT=0, pressing=false; c.addEventListener('pointerdown', ()=>{ pressing=true; pressT=performance.now(); }); addEventListener('pointerup', ()=>{ pressing=false; }); setInterval(()=>{ if(pressing && performance.now()-pressT>600){ glyphs.length=0; pressing=false; draw(); } },120);
+
+  // ======= Transport & Persist =======
+  const bAudio=document.getElementById('btn-audio'); const bPlay=document.getElementById('btn-play'); const bStop=document.getElementById('btn-stop'); const bClear=document.getElementById('btn-clear');
+  bAudio.addEventListener('click', ()=>{ if(!ac){ setupAudio(); restore(); } bAudio.disabled=true; bPlay.disabled=false; bStop.disabled=false; });
+  bPlay.addEventListener('click', ()=>{ if(!ac) return; state.isPlaying=true; state.startTime=ac.currentTime+.05; engine(); });
+  bStop.addEventListener('click', ()=>{ state.isPlaying=false; cancelAnimationFrame(raf); draw(); });
+  bClear.addEventListener('click', ()=>{ glyphs.length=0; draw(); });
+
+  function snapshot(){ return {meta:{name:'Angelus Novus · Plat',v:'2.0',t:Date.now()}, params:{bpm:state.bpm,storm:state.storm,gaze:state.gaze,memoryRev:state.memoryRev,redemption:state.redemption,scaleIdx:state.scaleIdx,root:state.root,tempoAngle}, grid:state.grid}; }
+  function persist(){ localStorage.setItem('angelus_plat_v2', JSON.stringify(snapshot())); }
+  function restore(){ try{ const s=JSON.parse(localStorage.getItem('angelus_plat_v2')); if(!s) return; Object.assign(state, s.params); tempoAngle=s.params.tempoAngle||tempoAngle; state.root=rootOf(SCALE_KEYS[state.scaleIdx]); if(s.grid) state.grid=s.grid; }catch(e){} }
+
+  // ======= Engine loop =======
+  let raf=0, lastDraw=0; function engine(){ if(state.isPlaying) schedule(); const now=performance.now(); if(now-lastDraw>16){ draw(); lastDraw=now; } raf=requestAnimationFrame(engine); }
+
+  // Boot
+  resize(); draw(); engine();
+})();
+</script>
+</body>
+</html>

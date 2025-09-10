@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cool Ratio</title>
+<meta name="theme-color" content="#F6D35B">
+<style>
+:root {
+  --bg: #F6D35B;
+  --ink: #000;
+  --accent: #FF7A00;
+  --glow: #FFA733;
+}
+* {box-sizing: border-box; margin: 0; padding: 0;}
+body {
+  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+header {
+  display: flex;
+  align-items: center;
+  padding: .5rem;
+  gap: .5rem;
+}
+header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.controls {
+  display: flex;
+  gap: .5rem;
+  margin-left: auto;
+}
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--ink);
+}
+#tuner {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+#tuner::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--accent);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+#canvas3d {
+  width: 100%;
+  height: 200px;
+  display: block;
+  background: var(--bg);
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill,minmax(140px,1fr));
+  gap: .5rem;
+  padding: .5rem;
+}
+.tile {
+  background: var(--accent);
+  color: var(--ink);
+  aspect-ratio: 1/1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+  padding: .5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: transform .15s ease;
+}
+.tile:hover,
+.tile:focus {
+  transform: translateY(-2px);
+  outline: 2px solid var(--glow);
+  outline-offset: 2px;
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>COOL RATIO</h1>
+  <input type="range" id="tuner" min="0" max="100" value="0" aria-label="Filter by tag">
+  <div class="controls">
+    <button id="hapticsBtn" class="icon-btn" aria-label="Toggle haptics">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M9 5v14l11-7L9 5z"/></svg>
+    </button>
+    <button id="themeBtn" class="icon-btn" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v1M12 20v1M4.22 4.22l.71.71M18.36 18.36l.71.71M1 12h1M22 12h1M4.22 19.78l.71-.71M18.36 5.64l.71-.71M12 6a6 6 0 000 12V6z"/></svg>
+    </button>
+  </div>
+</header>
+<!-- Tiles of all local pages (starts at the top) -->
+<div id="grid" class="grid" role="list"></div>
+<canvas id="canvas3d" aria-hidden="true"></canvas>
+
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
+<script>
+// All local HTML pages as tiles (numbered titles)
+const PROJECTS = [
+  { title: "1 · an-spin.html",     url: "an-spin.html",     tag: "page", color: "#FF7A00" },
+  { title: "2 · asc-075.html",     url: "asc-075.html",     tag: "page", color: "#FF9A3A" },
+  { title: "3 · asc-697.html",     url: "asc-697.html",     tag: "page", color: "#FFB400" },
+  { title: "4 · imc-00.html",      url: "imc-00.html",      tag: "page", color: "#FFA733" },
+  { title: "5 · index-3d.html",    url: "index-3d.html",    tag: "page", color: "#FF7A00" },
+  { title: "6 · index.html",       url: "index.html",       tag: "page", color: "#FF9A3A" },
+  { title: "7 · new-bone.html",    url: "new-bone.html",    tag: "page", color: "#FFB400" },
+  { title: "8 · novus-plate.html", url: "novus-plate.html", tag: "page", color: "#FFA733" },
+  { title: "9 · smithson.html",    url: "smithson.html",    tag: "page", color: "#FF7A00" }
+];
+let hapticsOn = true;
+const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+document.getElementById('hapticsBtn').onclick = () => { hapticsOn = !hapticsOn; };
+document.getElementById('themeBtn').onclick = () => {
+  const bg = document.documentElement.style.getPropertyValue('--bg');
+  if(bg==='#111'){
+    setTheme('#F6D35B','#000');
+  } else {
+    setTheme('#111','#fff');
+  }
+};
+function setTheme(bg,ink){
+  document.documentElement.style.setProperty('--bg', bg);
+  document.documentElement.style.setProperty('--ink', ink);
+}
+function vibrate(ms){ if(hapticsOn && !prefersReduced && navigator.vibrate) navigator.vibrate(ms); }
+function renderGrid(list){
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  list.forEach(p=>{
+    const tile = document.createElement('a');
+    tile.href = p.url;
+    tile.className = 'tile';
+    tile.role = 'listitem';
+    tile.tabIndex = 0;
+    tile.style.background = p.color || 'var(--accent)';
+    tile.textContent = p.title;
+    tile.onclick = () => vibrate(10);
+    tile.oncontextmenu = e => {
+      e.preventDefault();
+      vibrate(30);
+      alert(`${p.title} — ${p.tag}`);
+    };
+    grid.appendChild(tile);
+  });
+}
+renderGrid(PROJECTS);
+
+/* WebGL Detection */
+const webgl = (() => {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!window.WebGLRenderingContext && (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+  } catch(e){ return false; }
+})();
+if(webgl && !prefersReduced) init3D();
+
+function init3D(){
+  const canvas = document.getElementById('canvas3d');
+  const scene = new THREE.Scene();
+  const camera = new THREE.OrthographicCamera(-5,5,5,-5,0.1,100);
+  camera.position.z = 10;
+  const renderer = new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+  renderer.setSize(canvas.clientWidth,canvas.clientHeight);
+  
+  const light = new THREE.DirectionalLight(0xffffff,1);
+  light.position.set(1,1,1);
+  scene.add(light);
+  scene.add(new THREE.AmbientLight(0xffffff,0.4));
+  
+  const group = new THREE.Group();
+  PROJECTS.forEach((p,i)=>{
+    const geo = new THREE.PlaneGeometry(1,1);
+    const mat = new THREE.MeshLambertMaterial({color: p.color || 0xff7a00});
+    const mesh = new THREE.Mesh(geo,mat);
+    mesh.position.x = (i%5)-2;
+    mesh.position.y = -Math.floor(i/5);
+    mesh.userData = p;
+    group.add(mesh);
+  });
+  scene.add(group);
+  
+  let isDragging = false, prevX=0, velocity=0;
+  canvas.addEventListener('pointerdown',e=>{isDragging=true; prevX=e.clientX;});
+  window.addEventListener('pointerup',()=>{isDragging=false;});
+  window.addEventListener('pointermove',e=>{
+    if(isDragging){
+      const dx = e.clientX - prevX;
+      prevX = e.clientX;
+      group.position.x += dx/50;
+      velocity = dx/50;
+    }
+  });
+  canvas.addEventListener('click',e=>{
+    const rect = canvas.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(group.children);
+    if(hits.length>0){ vibrate(10); window.location = hits[0].object.userData.url; }
+  });
+  function animate(){
+    requestAnimationFrame(animate);
+    if(!isDragging){ group.position.x += velocity; velocity *= 0.95; }
+    renderer.render(scene,camera);
+  }
+  animate();
+}
+</script>
+</body>
+</html>

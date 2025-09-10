@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>Angelus Novus · Plat (Haunt Mode)</title>
+<style>
+  :root{ --bg:#0a0a0a; --fg:#f6f6f6; --mut:#9aa0a6; --line:#1b1b1b; --glow:#ffffff; --aura:#b8c7ff; --seraph:#ffd6ff; }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:radial-gradient(1200px circle at 50% 20%, #0f0f12 0%, #070709 55%);color:var(--fg);font:400 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial}
+  .app{display:grid;grid-template-rows:auto 1fr auto;min-height:100%}
+  header{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;justify-content:space-between}
+  header .title{font-weight:700;letter-spacing:.35px}
+  header .mini{font-size:12px;color:var(--mut)}
+  .btn{appearance:none;border:1px solid var(--line);background:#101115;color:var(--fg);padding:8px 12px;border-radius:999px;cursor:pointer}
+  .btn:hover{border-color:#2a2a2a}
+  .btn.active{box-shadow:0 0 0 1px #3a3a3a inset}
+  main{padding:10px}
+  canvas{width:100%;height:min(78vh,560px);display:block;background:transparent}
+  footer{border-top:1px solid var(--line);padding:8px 12px;display:flex;justify-content:space-between;color:var(--mut);font-size:12px}
+  /* ethereal hint */
+  .hint{font-size:12px;color:#8b8f99;opacity:.85}
+</style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="Angelus Novus Spinning Sound Sequencer — Haunt Mode">
+    <header>
+      <div>
+        <div class="title">Angelus Novus · Plat</div>
+        <div class="mini">No sliders. Just wind, memory, and light.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="btnPlay" class="btn">▶︎ Play</button>
+        <button id="btnFreeze" class="btn" title="Freeze the platter for time‑lens scrubbing">🧊 Freeze</button>
+      </div>
+    </header>
+
+    <main>
+      <canvas id="platter" width="900" height="560" aria-label="Spinning platter canvas"></canvas>
+      <div class="hint" style="margin-top:8px">
+        Tap spokes to toggle notes • drag near rim to change pitch (radial) • two‑finger swipe = wind • long‑press = ascend.
+      </div>
+    </main>
+
+    <footer>
+      <div>Debris becomes halo. Halo becomes hymn.</div>
+      <div>© Plat — heavenly experimental mode</div>
+    </footer>
+  </div>
+
+<script>
+(function(){
+  // ====== AUDIO CORE (haunting & heavenly) ======
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const actx = new AC();
+
+  // Master & gentle sheen
+  const master = actx.createGain(); master.gain.value = 0.85; master.connect(actx.destination);
+  const sheen = actx.createBiquadFilter(); sheen.type='highshelf'; sheen.frequency.value=6000; sheen.gain.value=2; sheen.connect(master);
+
+  // Simple lush reverb via feedback delay network (no IRs)
+  function makeFDN(amount=0.25){
+    const g = actx.createGain(); g.gain.value = amount; // wet level
+    const inMix = actx.createGain(); const outMix = actx.createGain();
+    inMix.connect(outMix); // dry bypass
+
+    const d1 = actx.createDelay(0.6), d2 = actx.createDelay(0.6), d3 = actx.createDelay(0.6), d4 = actx.createDelay(0.6);
+    d1.delayTime.value = 0.29; d2.delayTime.value = 0.37; d3.delayTime.value = 0.41; d4.delayTime.value = 0.53;
+    const f1 = actx.createBiquadFilter(); f1.type='lowpass'; f1.frequency.value=4500;
+    const f2 = actx.createBiquadFilter(); f2.type='lowpass'; f2.frequency.value=3800;
+    const fb = actx.createGain(); fb.gain.value = 0.72; // tail
+
+    inMix.connect(d1); inMix.connect(d2); inMix.connect(d3); inMix.connect(d4);
+    d1.connect(f1).connect(fb).connect(d3);
+    d2.connect(f2).connect(fb).connect(d4);
+    d3.connect(g); d4.connect(g);
+    g.connect(outMix); // wet to out
+    return {in: inMix, out: outMix};
+  }
+  const reverb = makeFDN(0.32);
+  reverb.out.connect(sheen);
+
+  // Pad (angelic sustain)
+  let pad = null; let ascend = false;
+  function startPad(){
+    if(pad) return;
+    const mix = actx.createGain(); mix.gain.value = 0.22;
+    const lfo = actx.createOscillator(); lfo.frequency.value = 0.08; // slow
+    const lfoGain = actx.createGain(); lfoGain.gain.value = 6; // cents vibrato
+
+    const notes = [220, 220*Math.pow(2,3/12), 220*Math.pow(2,7/12)]; // A minor triadish
+    const oscs = notes.map((f,i)=>{
+      const o = actx.createOscillator(); o.type='sawtooth'; o.frequency.value=f*(i===1?0.997: (i===2?1.005:1));
+      const mod = actx.createGain(); mod.gain.value = 0;
+      lfo.connect(mod);
+      mod.connect(o.detune);
+      const filt = actx.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value= ascend? 4200: 2200; filt.Q.value = 0.3;
+      const env = actx.createGain(); env.gain.value = 0.0001;
+      o.connect(filt).connect(env).connect(reverb.in);
+      o.connect(env).connect(mix); // a bit of dry
+      const t = actx.currentTime; env.gain.exponentialRampToValueAtTime(0.24, t+2.0);
+      o.start();
+      return {o, env, filt};
+    });
+    lfo.start();
+    mix.connect(reverb.in);
+    pad = {mix, lfo, lfoGain, oscs};
+  }
+  function stopPad(){ if(!pad) return; pad.oscs.forEach(x=>{ const t=actx.currentTime; x.env.gain.exponentialRampToValueAtTime(0.0001, t+1.2); x.o.stop(t+1.25); }); pad=null; }
+
+  // Hit voice
+  function playHit(when, freq, vel){
+    const src = actx.createOscillator(); src.type='triangle'; src.frequency.setValueAtTime(freq, when);
+    const filt = actx.createBiquadFilter(); filt.type='lowpass'; filt.frequency.setValueAtTime(1000+2500*vel, when);
+    const env = actx.createGain(); env.gain.setValueAtTime(0, when);
+    env.gain.linearRampToValueAtTime(0.35*vel, when+0.006);
+    env.gain.exponentialRampToValueAtTime(0.0001, when+0.26);
+    src.connect(filt).connect(env).connect(reverb.in);
+    src.connect(env).connect(sheen);
+    src.start(when); src.stop(when+0.3);
+  }
+
+  // ====== SEQUENCER STATE ======
+  const STEPS = 16; // 16th grid
+  const NOTES = new Array(STEPS).fill(0).map((_,i)=>({ on:(i%4===0), pc:(i*5)%12 }));
+  let tempo = 120, swing=0, running=false, frozen=false;
+  const A_MINOR = [0,2,3,5,7,8,10];
+  function snap(pc){ const m=((pc%12)+12)%12; let b=A_MINOR[0],d=99; for(const s of A_MINOR){ const dd=Math.min((m-s+12)%12,(s-m+12)%12); if(dd<d){d=dd;b=s;} } return b; }
+  function pcToFreq(pc, base=220){ return base*Math.pow(2, pc/12); }
+
+  // Storm & memory: no sliders — autonomous wind + gestures
+  const params = { storm:0.18, memory:8.0, gaze:0.22 };
+  let windBoost = 0; // gesture-driven
+  function tickStorm(){ // random walk + decay for wind
+    params.storm += (Math.random()-0.5)*0.015 + windBoost; windBoost *= 0.92; // decay
+    params.storm = Math.max(0, Math.min(0.6, params.storm));
+  }
+
+  const lookahead = 0.1; let nextTickTime=0; let phase=0; const history=[]; // {t,phase,hit,pc,rad}
+
+  function schedule(baseTime){
+    const sec = 60/tempo/4;
+    const idx = Math.floor((phase*STEPS)%STEPS);
+    const isOdd = idx%2===1; const swingPush = isOdd ? 0.0 : 0.0; // minimalist swing
+    const jitter = (Math.random()*2-1)*params.storm*0.02; // ±20ms scaled by storm
+    const t = baseTime + sec + swingPush + jitter;
+
+    phase = (phase + 1/STEPS) % 1;
+    const step = Math.floor(phase*STEPS)%STEPS;
+
+    const gazeSteps = Math.floor(params.gaze*STEPS);
+    let gazeHit=0; for(let i=1;i<=gazeSteps;i++){ const k=(step-i+STEPS)%STEPS; if(NOTES[k].on) gazeHit++; }
+    const gazeAmt = gazeSteps? (gazeHit/gazeSteps):0;
+
+    if(NOTES[step].on){ const pc = NOTES[step].pc; const vel=0.55+0.4*gazeAmt; playHit(t, pcToFreq(pc), vel); history.push({t, phase, hit:1, pc, rad:0}); spawnDebris(phase, true, pc); }
+    else { history.push({t, phase, hit:0, pc:null, rad:0}); spawnDebris(phase, false, null); }
+  }
+
+  // ====== VISUALS ======
+  const canvas = document.getElementById('platter'); const g = canvas.getContext('2d');
+  const btnPlay = document.getElementById('btnPlay'); const btnFreeze = document.getElementById('btnFreeze');
+
+  // Debris particles
+  const debris=[]; // {a, r, vr, va, life, hit, hue}
+  function spawnDebris(phase, hit, pc){
+    const hue = hit? Math.round(((pc||0)/12)*360) : 220;
+    for(let i=0;i< (hit? 6: 2); i++){
+      debris.push({ a: phase*Math.PI*2 + (Math.random()-0.5)*0.06, r: 0, vr: 0.25+Math.random()*0.6, va: (Math.random()-0.5)*0.002, life: 1, hit, hue });
+    }
+  }
+
+  let ascendPressT=0;
+  canvas.addEventListener('pointerdown', (e)=>{ if(actx.state!=='running') actx.resume(); ascendPressT = performance.now(); handlePointer(e, true); pressed=true;});
+  canvas.addEventListener('pointermove', (e)=>{ if(pressed) handlePointer(e, false);});
+  window.addEventListener('pointerup', ()=>{ pressed=false; if(performance.now()-ascendPressT>500){ ascend=!ascend; if(pad){ pad.oscs.forEach(x=> x.filt.frequency.setValueAtTime(ascend?4200:2200, actx.currentTime)); } btnFreeze.blur(); } });
+
+  let pressed=false; let lastGestureX=0;
+  function handlePointer(e, tap){
+    const rect = canvas.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top; const cx=rect.width/2, cy=rect.height/2;
+    const dx=x-cx, dy=y-cy; const ang=Math.atan2(dy,dx); const a01=(ang<0?ang+Math.PI*2:ang)/(Math.PI*2);
+    const r=Math.hypot(dx,dy); const R=Math.min(cx,cy)-16; const idx=Math.floor(a01*STEPS)%STEPS;
+    if(r>R-44 && r<R+44){ if(tap){ NOTES[idx].on=!NOTES[idx].on; } const radial=Math.min(Math.max((r-(R-60))/80,0),1); NOTES[idx].pc = snap(Math.round(radial*12)); }
+    // wind gesture: fast horizontal move near top → gust
+    const speedX = (x-lastGestureX); lastGestureX = x; if(Math.abs(speedX)>18){ windBoost += Math.sign(speedX)*0.002; }
+  }
+
+  function draw(){
+    const dpr=Math.min(2,window.devicePixelRatio||1); const w=canvas.clientWidth, h=canvas.clientHeight; canvas.width=w*dpr; canvas.height=h*dpr; g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,w,h); const cx=w/2, cy=h/2; const R=Math.min(cx,cy)-18; g.translate(cx,cy);
+
+    // aura background
+    g.save(); g.globalCompositeOperation='lighter';
+    const grd=g.createRadialGradient(0,0,R*0.1, 0,0,R*1.1); grd.addColorStop(0, 'rgba(184,199,255,0.06)'); grd.addColorStop(1,'rgba(184,199,255,0.0)'); g.fillStyle=grd; g.beginPath(); g.arc(0,0,R*1.12,0,Math.PI*2); g.fill(); g.restore();
+
+    // platter rim & spokes
+    g.strokeStyle='#2a2a2a'; g.lineWidth=2; g.beginPath(); g.arc(0,0,R,0,Math.PI*2); g.stroke();
+    for(let i=0;i<STEPS;i++){ const a=i/STEPS*Math.PI*2; const c=Math.cos(a), s=Math.sin(a);
+      g.strokeStyle='#1a1a1a'; g.beginPath(); g.moveTo(c*(R-12), s*(R-12)); g.lineTo(c*(R-32), s*(R-32)); g.stroke();
+      const on=NOTES[i].on; const x=c*(R-40), y=s*(R-40); g.fillStyle=on? 'rgba(60,240,180,0.9)':'#1b1b1b'; g.beginPath(); g.arc(x,y, on?6.5:5.5, 0, Math.PI*2); g.fill();
+    }
+
+    // shadow arc (next 1/8)
+    g.strokeStyle='rgba(255,255,255,0.25)'; g.lineWidth=3; g.beginPath(); g.arc(0,0,R-6, phase*Math.PI*2, (phase+0.125)*Math.PI*2); g.stroke();
+
+    // history halo as expanding spiral shards
+    const cutoff = actx.currentTime - params.memory; for(const ev of history){ if(ev.t<=cutoff) continue; const age=(actx.currentTime-ev.t)/params.memory; const a=ev.phase*Math.PI*2 + age*0.35; const rr=R + 4 + age*R*0.25; g.globalAlpha=1-age; g.strokeStyle= ev.hit? 'rgba(255,255,255,0.9)':'rgba(140,140,160,0.5)'; g.lineWidth= ev.hit? 2:1; g.beginPath(); g.arc(0,0,rr, a-0.02, a+0.02); g.stroke(); g.globalAlpha=1; }
+
+    // debris particles drifting outward
+    for(let i=debris.length-1;i>=0;i--){ const p=debris[i]; p.r += p.vr; p.a += p.va; p.life -= 0.008; if(p.life<=0){ debris.splice(i,1); continue; }
+      const x=Math.cos(p.a)*(R-10+p.r), y=Math.sin(p.a)*(R-10+p.r); g.globalAlpha = Math.max(0, p.life)*(p.hit?1:0.7);
+      g.fillStyle = p.hit? `hsla(${p.hue} 80% 60% / 0.7)` : 'rgba(180,200,255,0.28)'; g.beginPath(); g.arc(x,y, p.hit? 2.2: 1.6, 0, Math.PI*2); g.fill();
+      g.globalAlpha=1;
+    }
+
+    // phase needle (gaze vector)
+    g.strokeStyle = '#ff2a2a'; g.lineWidth=2.2; const aNow=phase*Math.PI*2; g.beginPath(); g.moveTo(Math.cos(aNow)*(R-6), Math.sin(aNow)*(R-6)); g.lineTo(0,0); g.stroke();
+
+    // wind indicator (subtle)
+    const wind = Math.min(1, Math.abs(windBoost)*40 + params.storm*1.2);
+    g.globalAlpha = 0.08 + wind*0.06; g.fillStyle='#ffffff'; g.beginPath(); g.arc(0,0,R+10,0,Math.PI*2); g.fill(); g.globalAlpha=1;
+  }
+
+  // ====== SCHEDULER LOOP ======
+  function scheduler(){
+    if(!running){ requestAnimationFrame(draw); return; }
+    const now = actx.currentTime; if(nextTickTime===0) nextTickTime=now;
+    while(nextTickTime < now + 0.1){ schedule(nextTickTime); nextTickTime += 60/tempo/4; tickStorm(); }
+    requestAnimationFrame(draw); setTimeout(scheduler, 10);
+  }
+
+  // ====== CONTROLS (minimal) ======
+  btnPlay.addEventListener('click', ()=>{
+    if(!running){ running=true; btnPlay.textContent='⏸︎ Pause'; if(actx.state!=='running') actx.resume(); startPad(); scheduler(); }
+    else { running=false; btnPlay.textContent='▶︎ Play'; stopPad(); }
+  });
+  btnFreeze.addEventListener('click', ()=>{ frozen=!frozen; btnFreeze.classList.toggle('active', frozen); });
+
+  // ====== INIT ======
+  function drawIdle(){ draw(); requestAnimationFrame(drawIdle); }
+  drawIdle();
+})();
+</script>
+</body>
+</html>
