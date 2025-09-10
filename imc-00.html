@@ -308,6 +308,7 @@
         <div style="display:flex; gap:6px; align-items:center;">
             <button id="help-btn" class="control-btn">?</button>
             <button id="full-screen-btn" class="control-btn" title="Fullscreen">⤢</button>
+            <button id="arm-audio-btn" class="control-btn" title="Tap to enable audio">Tap ▶︎</button>
         </div>
         <div class="slider-group">
             <label for="rotation-speed">Spin</label>
@@ -1078,46 +1079,40 @@
                 rotationSpeed = parseFloat(e.target.value);
             });
 
-            // Start Audio (ensures AudioContext is running) + gentle chime
-            const startBtn = document.getElementById('start-audio-btn');
-            if (startBtn) {
-                startBtn.addEventListener('click', () => {
-                    initAudio();
-                    if (audioContext && audioContext.state === 'suspended') {
-                        audioContext.resume();
-                    }
-                    // short confirmation tone
-                    const wp = new THREE.Vector3(0, 0, 0);
-                    const cs = wp.clone().applyMatrix4(camera.matrixWorldInverse);
-                    const yF = THREE.MathUtils.clamp((cs.y + 2) / 12, 0, 1);
-                    const xF = 0.5; const zF = 0.5;
-                    playTone(currentScale[0], yF, xF, zF);
-                    const info = document.getElementById('info-overlay');
-                    info.textContent = 'Audio started';
-                    info.style.opacity = '1';
-                    setTimeout(() => { info.style.opacity = '0'; }, 1200);
-                });
-            }
-
-            // Autoplay safeguards: resume audio on first user interaction anywhere
-            let audioArmed = false;
-            const ensureAudio = () => {
-                if (audioArmed) return; audioArmed = true;
+            // Explicit audio arm button (helps on iOS/GitHub Pages)
+            const armBtn = document.getElementById('arm-audio-btn');
+            const armAudioNow = () => {
                 initAudio();
                 if (audioContext && audioContext.state === 'suspended') {
                     audioContext.resume();
                 }
-                // start a soft drone automatically to ensure immediate sound bed
                 if (!droneOscillator) {
-                    toggleDrone();
+                    try { toggleDrone(); } catch {}
                 }
                 const info = document.getElementById('info-overlay');
-                info.textContent = 'Audio armed (drone on)';
-                info.style.opacity = '1';
-                setTimeout(() => { info.style.opacity = '0'; }, 1200);
+                if (info) {
+                    info.textContent = 'Audio armed';
+                    info.style.opacity = '1';
+                    setTimeout(() => { info.style.opacity = '0'; }, 1200);
+                }
+                if (armBtn) armBtn.style.display = 'none';
             };
-            ['pointerdown','touchstart','keydown','visibilitychange'].forEach(evt => {
-                window.addEventListener(evt, ensureAudio, { once: true, passive: true });
+            if (armBtn) { armBtn.addEventListener('click', armAudioNow, { passive: true }); }
+
+            // Autoplay safeguards: aggressively arm on multiple gestures (not once-only)
+            let audioArmed = false;
+            const ensureAudio = () => {
+                if (audioArmed && audioContext && audioContext.state === 'running') return;
+                initAudio();
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                audioArmed = true;
+                if (armBtn) armBtn.style.display = 'none';
+            };
+            ['pointerdown','mousedown','touchstart','keydown','click'].forEach(evt => {
+                window.addEventListener(evt, ensureAudio, { passive: true });
+                document.addEventListener(evt, ensureAudio, { passive: true });
             });
 
             // Delight helpers (fire color + crackle)

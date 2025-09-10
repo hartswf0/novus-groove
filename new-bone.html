@@ -288,6 +288,7 @@
             <button id="toggle-center-lights-btn" class="control-btn" title="Toggle Center Lights">☀︎</button>
         </div>
         <button id="help-btn" class="control-btn">?</button>
+        <button id="arm-audio-btn" class="control-btn" title="Tap to enable audio">Tap ▶︎</button>
         <div class="slider-group">
             <label for="rotation-speed"><span id="rotation-speed-label">Spin/Tempo</span></label>
             <input id="rotation-speed" type="range" min="-0.05" max="0.05" step="0.001" value="0" />
@@ -766,20 +767,31 @@
             let pressStartPos = null;
             // Disable long-press behavior to avoid accidental Sample Manager popups
             const enableLongPressSamples = false; // Kept for future reference but disabled
+            // Resolve a mesh hit back to its interactive owner (figure/note/cone)
+            function resolveClickable(obj) {
+                let cur = obj;
+                while (cur && (!cur.userData || !cur.userData.type) && cur.parent) {
+                    cur = cur.parent;
+                }
+                return cur || obj;
+            }
 
             function onPointerDown(event) {
                 initAudio();
                 if (audioContext && audioContext.state !== 'running' && typeof audioContext.resume === 'function') {
                     audioContext.resume();
                 }
-                pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-                pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                const rect = renderer.domElement.getBoundingClientRect();
+                const cx = (event.clientX - rect.left) / rect.width;
+                const cy = (event.clientY - rect.top) / rect.height;
+                pointer.x = cx * 2 - 1;
+                pointer.y = -(cy * 2 - 1);
                 
                 raycaster.setFromCamera(pointer, camera);
                 const intersects = raycaster.intersectObjects(musicalObjects, true);
                 
                 if (intersects.length > 0) {
-                    const clickedObject = intersects[0].object.parent || intersects[0].object;
+                    const clickedObject = resolveClickable(intersects[0].object);
                     handleObjectClick(clickedObject);
 
                     // Dragging logic
@@ -884,6 +896,32 @@
             renderer.domElement.addEventListener('pointerup', onPointerUp);
             renderer.domElement.addEventListener('pointerleave', onPointerUp);
 
+            // Touch fallbacks for mobile engines that prefer TouchEvents over PointerEvents
+            function touchPoint(ev) {
+                const t = ev.touches && ev.touches[0] ? ev.touches[0] : (ev.changedTouches && ev.changedTouches[0] ? ev.changedTouches[0] : null);
+                return t;
+            }
+            renderer.domElement.addEventListener('touchstart', (ev) => {
+                const t = touchPoint(ev); if (!t) return;
+                ev.preventDefault();
+                // Minimal shim with clientX/Y so our handlers work
+                onPointerDown({ clientX: t.clientX, clientY: t.clientY, altKey: false, shiftKey: false, buttons: 1 });
+                // Keep ownership during drag
+                if (renderer.domElement.setPointerCapture && t.identifier != null) {
+                    try { renderer.domElement.setPointerCapture(t.identifier); } catch {}
+                }
+            }, { passive: false });
+            renderer.domElement.addEventListener('touchmove', (ev) => {
+                const t = touchPoint(ev); if (!t) return;
+                ev.preventDefault();
+                onPointerMove({ clientX: t.clientX, clientY: t.clientY, movementY: 0, altKey: false, shiftKey: false, buttons: 1 });
+            }, { passive: false });
+            renderer.domElement.addEventListener('touchend', (ev) => {
+                const t = touchPoint(ev); // may be null on some browsers
+                ev.preventDefault();
+                onPointerUp({ clientX: t ? t.clientX : lastRotX, buttons: 0 });
+            }, { passive: false });
+
             window.addEventListener('resize', onWindowResize);
 
             const toggleControlsBtn = document.getElementById('toggle-controls-btn');
@@ -947,6 +985,42 @@
 
             const clearAudioBtn = document.getElementById('clear-audio-btn');
             clearAudioBtn.addEventListener('click', clearRecordedAudio);
+
+            // Explicit audio arm button (helps on iOS/GitHub Pages)
+            const armBtn = document.getElementById('arm-audio-btn');
+            const armAudioNow = () => {
+                initAudio();
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                if (!droneOscillator) {
+                    try { toggleDrone(); } catch {}
+                }
+                const info = document.getElementById('info-overlay');
+                if (info) {
+                    info.textContent = 'Audio armed';
+                    info.style.opacity = '1';
+                    setTimeout(() => { info.style.opacity = '0'; }, 1200);
+                }
+                if (armBtn) armBtn.style.display = 'none';
+            };
+            if (armBtn) { armBtn.addEventListener('click', armAudioNow, { passive: true }); }
+
+            // Autoplay safeguards: aggressively arm on multiple gestures (not once-only)
+            let audioArmed = false;
+            const ensureAudio = () => {
+                if (audioArmed && audioContext && audioContext.state === 'running') return;
+                initAudio();
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                audioArmed = true;
+                if (armBtn) armBtn.style.display = 'none';
+            };
+            ['pointerdown','mousedown','touchstart','keydown','click'].forEach(evt => {
+                window.addEventListener(evt, ensureAudio, { passive: true });
+                document.addEventListener(evt, ensureAudio, { passive: true });
+            });
 
             const toggleNamesBtn = document.getElementById('toggle-names-btn');
             toggleNamesBtn.addEventListener('click', () => {
@@ -1729,8 +1803,9 @@
                         const vector = new THREE.Vector3();
                         const worldPos = obj.getWorldPosition(vector);
                         worldPos.project(camera);
-                        const x = (worldPos.x * 0.5 + 0.5) * window.innerWidth;
-                        const y = (-worldPos.y * 0.5 + 0.5) * window.innerHeight;
+                        const rect = renderer.domElement.getBoundingClientRect();
+                        const x = (worldPos.x * 0.5 + 0.5) * rect.width + rect.left;
+                        const y = (-worldPos.y * 0.5 + 0.5) * rect.height + rect.top;
                         label.style.left = `${x}px`;
                         label.style.top = `${y}px`;
                     }
